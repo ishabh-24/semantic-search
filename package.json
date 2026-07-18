@@ -1,0 +1,17 @@
+{
+  "name": "drive-semantic-search",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first hybrid semantic search over Google Docs — a Manifest V3 Chrome extension",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.328",
+    "esbuild": "^0.25.5",
+    "typescript": "^5.8.3"
+  }
+}

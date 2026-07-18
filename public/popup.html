@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Drive Semantic Search</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        width: 360px;
+        margin: 0;
+        padding: 12px;
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+      #query {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 6px 8px;
+        font-size: 14px;
+      }
+      #status {
+        margin-top: 8px;
+        font-size: 12px;
+        opacity: 0.7;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Drive Semantic Search</h1>
+    <input id="query" type="search" placeholder="Search your Docs… (coming soon)" disabled />
+    <p id="status">Connecting to service worker…</p>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
