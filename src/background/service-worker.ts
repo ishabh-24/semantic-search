@@ -1,4 +1,5 @@
 import type { Request, Response } from "../shared/messages";
+import { getAuthStatus, signIn } from "./auth";
 
 // MV3 service workers are killed after ~30s of inactivity and restarted on
 // demand. Top-level code runs on every (re)start, so this timestamp
@@ -19,10 +20,25 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-chrome.runtime.onMessage.addListener(
-  (request: Request, _sender, sendResponse: (response: Response) => void) => {
-    if (request.type === "ping") {
-      sendResponse({ type: "pong", startedAt });
-    }
-  },
-);
+async function handle(request: Request): Promise<Response> {
+  switch (request.type) {
+    case "ping":
+      return { type: "pong", startedAt };
+    case "auth.getStatus":
+      return { type: "auth.status", status: await getAuthStatus() };
+    case "auth.signIn":
+      return { type: "auth.status", status: await signIn() };
+  }
+}
+
+chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
+  handle(request).then(sendResponse, (error) => {
+    console.error("[sw] handler failed", request.type, error);
+    sendResponse({
+      type: "auth.status",
+      status: { state: "disconnected", reason: "error", detail: String(error) },
+    } satisfies Response);
+  });
+  // Keep the message channel open for the async response.
+  return true;
+});

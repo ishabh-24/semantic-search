@@ -4,7 +4,16 @@
   "version": "0.1.0",
   "description": "Meaning-based search over your Google Docs. Local-first: your content never touches a third-party server.",
   "minimum_chrome_version": "120",
-  "permissions": ["alarms"],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA+qyxkdkCRsqxOdxWSwvaPQN6VBmgzdjke0rbSyXboq/Ry+ZGLzDcmAOXksGuRNoUILu5gmim3CmPp9kGgyZbK+sw+ECE96HzSnJm2ntWkVhSTRdg+K0jRI07TVBUQL4bRtwRzgXVtrLimBQLn6brm/K8qCQ318zE0Ru2NkTMTq6YTXf/SOOqS877yYA6jpcXZ+ipufxP1xMDBRYVjYrJVJKBe9ITxiV0TCCKuoOHv7LR8D/g5/P1kTZLqQZhID+a6aRgCAeMWX5/leToyuPYGCqu/ROvxqR6F8UfTfrA089H6ZiuCDfSLFwbjp97HX2KjS+riTBfp5q9xSshArjEWQIDAQAB",
+  "permissions": ["alarms", "identity", "identity.email"],
+  "host_permissions": ["https://oauth2.googleapis.com/"],
+  "oauth2": {
+    "client_id": "1094726331622-omcocdgeb3apg6l2c6iast7607k3imhh.apps.googleusercontent.com",
+    "scopes": [
+      "https://www.googleapis.com/auth/drive.readonly",
+      "https://www.googleapis.com/auth/drive.appdata"
+    ]
+  },
   "background": {
     "service_worker": "service-worker.js",
     "type": "module"

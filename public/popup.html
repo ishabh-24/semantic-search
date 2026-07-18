@@ -29,12 +29,19 @@
         font-size: 12px;
         opacity: 0.7;
       }
+      #connect {
+        margin-top: 4px;
+        padding: 6px 12px;
+        font-size: 13px;
+        cursor: pointer;
+      }
     </style>
   </head>
   <body>
     <h1>Drive Semantic Search</h1>
     <input id="query" type="search" placeholder="Search your Docs… (coming soon)" disabled />
-    <p id="status">Connecting to service worker…</p>
+    <p id="status">Checking Google Drive connection…</p>
+    <button id="connect" hidden>Connect Google Drive</button>
     <script type="module" src="popup.js"></script>
   </body>
 </html>
