@@ -21,14 +21,25 @@ export type DisconnectedReason =
   | "config"
   | "error";
 
+/** files.list projection — the metadata we keep for every doc. */
+export type DocMeta = {
+  id: string;
+  name: string;
+  /** RFC 3339 timestamp from Drive. */
+  modifiedTime: string;
+};
+
 export type Request =
   | { type: "ping" }
   | { type: "auth.getStatus" }
-  | { type: "auth.signIn" };
+  | { type: "auth.signIn" }
+  | { type: "drive.listDocs" };
 
 export type Response =
   | { type: "pong"; startedAt: number }
-  | { type: "auth.status"; status: AuthStatus };
+  | { type: "auth.status"; status: AuthStatus }
+  | { type: "drive.docList"; ok: true; count: number; sample: string[] }
+  | { type: "drive.docList"; ok: false; error: string };
 
 export function sendRequest(request: Request): Promise<Response> {
   return chrome.runtime.sendMessage(request);

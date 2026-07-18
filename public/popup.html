@@ -29,11 +29,17 @@
         font-size: 12px;
         opacity: 0.7;
       }
-      #connect {
+      #connect,
+      #list-docs {
         margin-top: 4px;
         padding: 6px 12px;
         font-size: 13px;
         cursor: pointer;
+      }
+      #dev-result {
+        margin-top: 8px;
+        font-size: 12px;
+        opacity: 0.7;
       }
     </style>
   </head>
@@ -42,6 +48,9 @@
     <input id="query" type="search" placeholder="Search your Docs… (coming soon)" disabled />
     <p id="status">Checking Google Drive connection…</p>
     <button id="connect" hidden>Connect Google Drive</button>
+    <!-- Dev-only trigger; replaced by the real indexing flow in commit 14. -->
+    <button id="list-docs" hidden>List Docs (dev)</button>
+    <p id="dev-result" hidden></p>
     <script type="module" src="popup.js"></script>
   </body>
 </html>

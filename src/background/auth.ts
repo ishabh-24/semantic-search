@@ -65,6 +65,27 @@ async function profileEmail(): Promise<string | null> {
   }
 }
 
+/** Thrown by getApiToken when no usable grant exists; callers surface
+ *  the popup's connect flow rather than handling this inline. */
+export class AuthRequiredError extends Error {
+  constructor(public readonly reason: DisconnectedReason) {
+    super(`auth required: ${reason}`);
+    this.name = "AuthRequiredError";
+  }
+}
+
+/** Silent token for API calls. Skips tokeninfo validation — API callers
+ *  learn about revocation from a 401 and call invalidateCachedToken. */
+export async function getApiToken(): Promise<string> {
+  const result = await requestToken(false);
+  if (!result.ok) throw new AuthRequiredError(result.reason);
+  return result.token;
+}
+
+export async function invalidateCachedToken(token: string): Promise<void> {
+  await chrome.identity.removeCachedAuthToken({ token });
+}
+
 /** Silent status check: never opens a consent window. */
 export async function getAuthStatus(): Promise<AuthStatus> {
   const cached = await requestToken(false);

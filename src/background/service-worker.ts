@@ -1,5 +1,6 @@
 import type { Request, Response } from "../shared/messages";
-import { getAuthStatus, signIn } from "./auth";
+import { AuthRequiredError, getAuthStatus, signIn } from "./auth";
+import { listAllDocs } from "./drive";
 
 // MV3 service workers are killed after ~30s of inactivity and restarted on
 // demand. Top-level code runs on every (re)start, so this timestamp
@@ -28,6 +29,28 @@ async function handle(request: Request): Promise<Response> {
       return { type: "auth.status", status: await getAuthStatus() };
     case "auth.signIn":
       return { type: "auth.status", status: await signIn() };
+    case "drive.listDocs":
+      return listDocs();
+  }
+}
+
+async function listDocs(): Promise<Response> {
+  try {
+    const docs = await listAllDocs();
+    console.log(`[drive] inventory: ${docs.length} Google Docs`);
+    console.table(docs);
+    return {
+      type: "drive.docList",
+      ok: true,
+      count: docs.length,
+      sample: docs.slice(0, 5).map((d) => d.name),
+    };
+  } catch (error) {
+    if (error instanceof AuthRequiredError) {
+      return { type: "drive.docList", ok: false, error: "Not connected to Google Drive." };
+    }
+    console.error("[drive] files.list failed", error);
+    return { type: "drive.docList", ok: false, error: String(error) };
   }
 }
 

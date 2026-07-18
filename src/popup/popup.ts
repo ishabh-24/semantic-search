@@ -3,9 +3,12 @@ import { sendRequest, type AuthStatus } from "../shared/messages";
 const status = document.getElementById("status")!;
 const connectButton = document.getElementById("connect") as HTMLButtonElement;
 const query = document.getElementById("query") as HTMLInputElement;
+const listDocsButton = document.getElementById("list-docs") as HTMLButtonElement;
+const devResult = document.getElementById("dev-result")!;
 
 function render(auth: AuthStatus): void {
   connectButton.hidden = auth.state === "connected";
+  listDocsButton.hidden = auth.state !== "connected";
   query.disabled = true; // search arrives in commit 13
 
   if (auth.state === "connected") {
@@ -54,6 +57,22 @@ connectButton.addEventListener("click", () => {
   refresh({ type: "auth.signIn" }).finally(() => {
     connectButton.disabled = false;
   });
+});
+
+listDocsButton.addEventListener("click", async () => {
+  listDocsButton.disabled = true;
+  devResult.hidden = false;
+  devResult.textContent = "Listing docs…";
+  try {
+    const response = await sendRequest({ type: "drive.listDocs" });
+    if (response.type !== "drive.docList") return;
+    devResult.textContent = response.ok
+      ? `${response.count} Google Docs found (full inventory in the SW console). ` +
+        `Newest: ${response.sample.join(" · ")}`
+      : response.error;
+  } finally {
+    listDocsButton.disabled = false;
+  }
 });
 
 await refresh({ type: "auth.getStatus" });
