@@ -34,7 +34,29 @@ export type Request =
   | { type: "auth.getStatus" }
   | { type: "auth.signIn" }
   | { type: "drive.listDocs" }
-  | { type: "drive.exportAll" };
+  | { type: "drive.exportAll" }
+  | { type: "embed.test" };
+
+/** Service worker → offscreen document. Runtime messages are broadcast to
+ *  every extension context, so each message carries an explicit target. */
+export type OffscreenRequest = {
+  target: "offscreen";
+  type: "embed";
+  id: number;
+  texts: string[];
+};
+
+export type OffscreenResponse =
+  | {
+      ok: true;
+      dims: number;
+      count: number;
+      /** Row-major floats — plain array because runtime messaging is JSON. */
+      vectors: number[];
+      workerStartedAt: number;
+      embedsServed: number;
+    }
+  | { ok: false; error: string };
 
 export type Response =
   | { type: "pong"; startedAt: number }
@@ -51,8 +73,18 @@ export type Response =
       /** First few failures for display; the full list is in the SW console. */
       failureSample: { name: string; error: string }[];
     }
-  | { type: "drive.exportReport"; ok: false; error: string };
+  | { type: "drive.exportReport"; ok: false; error: string }
+  | {
+      type: "embed.testResult";
+      ok: true;
+      count: number;
+      dims: number;
+      swStartedAt: number;
+      workerStartedAt: number;
+      embedsServed: number;
+    }
+  | { type: "embed.testResult"; ok: false; error: string };
 
 export function sendRequest(request: Request): Promise<Response> {
-  return chrome.runtime.sendMessage(request);
+  return chrome.runtime.sendMessage({ ...request, target: "background" });
 }

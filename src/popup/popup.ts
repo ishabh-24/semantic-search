@@ -98,4 +98,24 @@ exportAllButton.addEventListener("click", async () => {
   }
 });
 
+// Embedding needs no Drive auth, so this button is always visible.
+const embedTestButton = document.getElementById("embed-test") as HTMLButtonElement;
+embedTestButton.addEventListener("click", async () => {
+  embedTestButton.disabled = true;
+  devResult.hidden = false;
+  devResult.textContent = "Embedding test texts…";
+  try {
+    const response = await sendRequest({ type: "embed.test" });
+    if (response.type !== "embed.testResult") return;
+    devResult.textContent = response.ok
+      ? `${response.count} vectors × ${response.dims} dims · ` +
+        `worker up since ${new Date(response.workerStartedAt).toLocaleTimeString()} ` +
+        `(${response.embedsServed} embeds served) · ` +
+        `SW instance ${new Date(response.swStartedAt).toLocaleTimeString()}`
+      : response.error;
+  } finally {
+    embedTestButton.disabled = false;
+  }
+});
+
 await refresh({ type: "auth.getStatus" });

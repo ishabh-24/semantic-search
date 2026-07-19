@@ -9,6 +9,8 @@ const options = {
   entryPoints: {
     "service-worker": "src/background/service-worker.ts",
     popup: "src/popup/popup.ts",
+    offscreen: "src/offscreen/offscreen.ts",
+    "embedder-worker": "src/workers/embedder.worker.ts",
   },
   outdir: "dist",
   bundle: true,

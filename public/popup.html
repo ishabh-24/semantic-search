@@ -31,7 +31,8 @@
       }
       #connect,
       #list-docs,
-      #export-all {
+      #export-all,
+      #embed-test {
         margin-top: 4px;
         padding: 6px 12px;
         font-size: 13px;
@@ -52,6 +53,7 @@
     <!-- Dev-only trigger; replaced by the real indexing flow in commit 14. -->
     <button id="list-docs" hidden>List Docs (dev)</button>
     <button id="export-all" hidden>Export All (dev)</button>
+    <button id="embed-test">Test Embed (dev)</button>
     <p id="dev-result" hidden></p>
     <script type="module" src="popup.js"></script>
   </body>

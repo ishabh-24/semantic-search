@@ -1,6 +1,7 @@
 import type { Request, Response } from "../shared/messages";
 import { AuthRequiredError, getAuthStatus, signIn } from "./auth";
 import { exportDocs, listAllDocs } from "./drive";
+import { embedTexts } from "./embedder-client";
 
 // MV3 service workers are killed after ~30s of inactivity and restarted on
 // demand. Top-level code runs on every (re)start, so this timestamp
@@ -33,6 +34,30 @@ async function handle(request: Request): Promise<Response> {
       return listDocs();
     case "drive.exportAll":
       return exportAll();
+    case "embed.test":
+      return embedTest();
+  }
+}
+
+async function embedTest(): Promise<Response> {
+  try {
+    const result = await embedTexts(["hello world", "semantic search over google docs"]);
+    console.log(
+      `[embed] ${result.count} vectors × ${result.dims} dims; worker instance ` +
+        `${new Date(result.workerStartedAt).toISOString()}, ${result.embedsServed} embeds served`,
+    );
+    return {
+      type: "embed.testResult",
+      ok: true,
+      count: result.count,
+      dims: result.dims,
+      swStartedAt: startedAt,
+      workerStartedAt: result.workerStartedAt,
+      embedsServed: result.embedsServed,
+    };
+  } catch (error) {
+    console.error("[embed] test failed", error);
+    return { type: "embed.testResult", ok: false, error: String(error) };
   }
 }
 
@@ -89,7 +114,10 @@ async function listDocs(): Promise<Response> {
   }
 }
 
-chrome.runtime.onMessage.addListener((request: Request, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  // Ignore traffic addressed to other contexts (e.g. SW → offscreen).
+  if ((message as { target?: string }).target !== "background") return false;
+  const request = message as Request;
   handle(request).then(sendResponse, (error) => {
     console.error("[sw] handler failed", request.type, error);
     sendResponse({
