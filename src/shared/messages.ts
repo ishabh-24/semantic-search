@@ -33,13 +33,25 @@ export type Request =
   | { type: "ping" }
   | { type: "auth.getStatus" }
   | { type: "auth.signIn" }
-  | { type: "drive.listDocs" };
+  | { type: "drive.listDocs" }
+  | { type: "drive.exportAll" };
 
 export type Response =
   | { type: "pong"; startedAt: number }
   | { type: "auth.status"; status: AuthStatus }
   | { type: "drive.docList"; ok: true; count: number; sample: string[] }
-  | { type: "drive.docList"; ok: false; error: string };
+  | { type: "drive.docList"; ok: false; error: string }
+  | {
+      type: "drive.exportReport";
+      ok: true;
+      exported: number;
+      failed: number;
+      totalChars: number;
+      elapsedMs: number;
+      /** First few failures for display; the full list is in the SW console. */
+      failureSample: { name: string; error: string }[];
+    }
+  | { type: "drive.exportReport"; ok: false; error: string };
 
 export function sendRequest(request: Request): Promise<Response> {
   return chrome.runtime.sendMessage(request);

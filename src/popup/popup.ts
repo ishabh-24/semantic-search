@@ -4,11 +4,13 @@ const status = document.getElementById("status")!;
 const connectButton = document.getElementById("connect") as HTMLButtonElement;
 const query = document.getElementById("query") as HTMLInputElement;
 const listDocsButton = document.getElementById("list-docs") as HTMLButtonElement;
+const exportAllButton = document.getElementById("export-all") as HTMLButtonElement;
 const devResult = document.getElementById("dev-result")!;
 
 function render(auth: AuthStatus): void {
   connectButton.hidden = auth.state === "connected";
   listDocsButton.hidden = auth.state !== "connected";
+  exportAllButton.hidden = auth.state !== "connected";
   query.disabled = true; // search arrives in commit 13
 
   if (auth.state === "connected") {
@@ -72,6 +74,27 @@ listDocsButton.addEventListener("click", async () => {
       : response.error;
   } finally {
     listDocsButton.disabled = false;
+  }
+});
+
+exportAllButton.addEventListener("click", async () => {
+  exportAllButton.disabled = true;
+  devResult.hidden = false;
+  devResult.textContent = "Exporting all docs… (progress in the SW console)";
+  try {
+    const response = await sendRequest({ type: "drive.exportAll" });
+    if (response.type !== "drive.exportReport") return;
+    if (!response.ok) {
+      devResult.textContent = response.error;
+      return;
+    }
+    const failures = response.failureSample.map((f) => `${f.name}: ${f.error}`).join(" · ");
+    devResult.textContent =
+      `Exported ${response.exported} docs (${Math.round(response.totalChars / 1000)}k chars) ` +
+      `in ${Math.round(response.elapsedMs / 1000)}s; ${response.failed} failed.` +
+      (failures ? ` ${failures}` : "");
+  } finally {
+    exportAllButton.disabled = false;
   }
 });
 
