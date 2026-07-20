@@ -120,4 +120,24 @@ embedTestButton.addEventListener("click", async () => {
   }
 });
 
+const embedBenchButton = document.getElementById("embed-bench") as HTMLButtonElement;
+embedBenchButton.addEventListener("click", async () => {
+  embedBenchButton.disabled = true;
+  devResult.hidden = false;
+  devResult.textContent = "Benchmarking (single vs batched vs sorted)…";
+  try {
+    const response = await sendRequest({ type: "embed.bench" });
+    if (response.type !== "embed.benchResult") return;
+    devResult.textContent = response.ok
+      ? `${response.corpusSize} texts [${response.backend}] · ` +
+        `single ${response.singleTps.toFixed(0)}/s → ` +
+        `batched ${response.unsortedTps.toFixed(0)}/s → ` +
+        `sorted ${response.sortedTps.toFixed(0)}/s ` +
+        `(${(response.sortedTps / response.singleTps).toFixed(1)}× vs single)`
+      : response.error;
+  } finally {
+    embedBenchButton.disabled = false;
+  }
+});
+
 await refresh({ type: "auth.getStatus" });

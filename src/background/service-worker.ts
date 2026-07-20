@@ -1,7 +1,7 @@
 import type { Request, Response } from "../shared/messages";
 import { AuthRequiredError, getAuthStatus, signIn } from "./auth";
 import { exportDocs, listAllDocs } from "./drive";
-import { embedTexts } from "./embedder-client";
+import { embedTexts, embedBatched } from "./embedder-client";
 
 // MV3 service workers are killed after ~30s of inactivity and restarted on
 // demand. Top-level code runs on every (re)start, so this timestamp
@@ -36,6 +36,57 @@ async function handle(request: Request): Promise<Response> {
       return exportAll();
     case "embed.test":
       return embedTest();
+    case "embed.bench":
+      return embedBench();
+  }
+}
+
+// Generates a varied-length synthetic corpus so the length-sort has real
+// padding waste to eliminate (a uniform-length corpus would hide it).
+function benchCorpus(size: number): string[] {
+  const texts: string[] = [];
+  for (let i = 0; i < size; i++) {
+    const words = 8 + ((i * 37) % 190); // ~8..198 words → ~50..1200 chars
+    texts.push(Array.from({ length: words }, (_, w) => `token${(i + w) % 100}`).join(" "));
+  }
+  return texts;
+}
+
+async function embedBench(): Promise<Response> {
+  try {
+    const corpus = benchCorpus(128);
+    await embedTexts(["warm up the model before timing"]); // exclude load time
+
+    const time = async (options: Parameters<typeof embedBatched>[2]) => {
+      const t0 = Date.now();
+      const result = await embedBatched(corpus, undefined, options);
+      const ms = Date.now() - t0;
+      return { tps: (corpus.length / ms) * 1000, backend: result.backend, batches: result.batches };
+    };
+
+    const single = await time({ maxBatchSize: 1, maxBatchChars: 1e9, sort: false });
+    const unsorted = await time({ maxBatchSize: 32, maxBatchChars: 16000, sort: false });
+    const sorted = await time({ maxBatchSize: 32, maxBatchChars: 16000, sort: true });
+
+    console.log(
+      `[bench] ${corpus.length} texts [${sorted.backend}] — ` +
+        `single ${single.tps.toFixed(1)}/s, ` +
+        `batched-unsorted ${unsorted.tps.toFixed(1)}/s (${unsorted.batches} batches), ` +
+        `batched-sorted ${sorted.tps.toFixed(1)}/s (${sorted.batches} batches); ` +
+        `sorted vs single = ${(sorted.tps / single.tps).toFixed(1)}×`,
+    );
+    return {
+      type: "embed.benchResult",
+      ok: true,
+      corpusSize: corpus.length,
+      backend: sorted.backend,
+      singleTps: single.tps,
+      unsortedTps: unsorted.tps,
+      sortedTps: sorted.tps,
+    };
+  } catch (error) {
+    console.error("[bench] failed", error);
+    return { type: "embed.benchResult", ok: false, error: String(error) };
   }
 }
 

@@ -35,7 +35,8 @@ export type Request =
   | { type: "auth.signIn" }
   | { type: "drive.listDocs" }
   | { type: "drive.exportAll" }
-  | { type: "embed.test" };
+  | { type: "embed.test" }
+  | { type: "embed.bench" };
 
 /** Service worker → offscreen document. Runtime messages are broadcast to
  *  every extension context, so each message carries an explicit target. */
@@ -89,7 +90,18 @@ export type Response =
       modelLoadMs: number;
       textsPerSec: number;
     }
-  | { type: "embed.testResult"; ok: false; error: string };
+  | { type: "embed.testResult"; ok: false; error: string }
+  | {
+      type: "embed.benchResult";
+      ok: true;
+      corpusSize: number;
+      backend: string;
+      /** Wall-clock throughput (texts/s) for each strategy. */
+      singleTps: number;
+      unsortedTps: number;
+      sortedTps: number;
+    }
+  | { type: "embed.benchResult"; ok: false; error: string };
 
 export function sendRequest(request: Request): Promise<Response> {
   return chrome.runtime.sendMessage({ ...request, target: "background" });
