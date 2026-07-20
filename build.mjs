@@ -1,5 +1,5 @@
 import * as esbuild from "esbuild";
-import { cp, rm } from "node:fs/promises";
+import { cp, rm, readdir } from "node:fs/promises";
 
 const watch = process.argv.includes("--watch");
 
@@ -26,17 +26,19 @@ const options = {
 async function copyStatic() {
   await cp("public", "dist", { recursive: true });
   // ONNX Runtime's WASM backend is CODE and must ship inside the package
-  // (MV3 remote-code ban). ORT loads the .mjs/.wasm pair at runtime from
-  // env.backends.onnx.wasm.wasmPaths, which the worker points at dist/.
+  // (MV3 remote-code ban). ORT dynamically imports one of several runtime
+  // glue files at load time — the exact variant (plain / jsep / jspi /
+  // asyncify) depends on the chosen backend, threading, and Chrome's
+  // enabled features — so we ship the whole ort-wasm-simd-threaded.* set
+  // rather than guess which one it will reach for. env.backends.onnx.wasm.
+  // wasmPaths points the worker at dist/, where these land.
   const ortDist = "node_modules/onnxruntime-web/dist";
-  for (const file of [
-    // Plain build: the pure-WASM (CPU) fallback path.
-    "ort-wasm-simd-threaded.mjs",
-    "ort-wasm-simd-threaded.wasm",
-    // JSEP build: the WebGPU-capable runtime (also does CPU).
-    "ort-wasm-simd-threaded.jsep.mjs",
-    "ort-wasm-simd-threaded.jsep.wasm",
-  ]) {
+  const runtimeFiles = (await readdir(ortDist)).filter(
+    (f) =>
+      f.startsWith("ort-wasm-simd-threaded.") &&
+      (f.endsWith(".mjs") || f.endsWith(".wasm")),
+  );
+  for (const file of runtimeFiles) {
     await cp(`${ortDist}/${file}`, `dist/${file}`);
   }
 }
