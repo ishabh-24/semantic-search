@@ -38,6 +38,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           vectors: Array.from(response.vectors),
           workerStartedAt: response.workerStartedAt,
           embedsServed: response.embedsServed,
+          backend: response.backend,
+          modelLoadMs: response.modelLoadMs,
+          inferMs: response.inferMs,
         }
       : { ok: false, error: response.error };
     sendResponse(reply);

@@ -25,6 +25,20 @@ const options = {
 // handles TypeScript. Keeps the mapping from source to dist/ trivially auditable.
 async function copyStatic() {
   await cp("public", "dist", { recursive: true });
+  // ONNX Runtime's WASM backend is CODE and must ship inside the package
+  // (MV3 remote-code ban). ORT loads the .mjs/.wasm pair at runtime from
+  // env.backends.onnx.wasm.wasmPaths, which the worker points at dist/.
+  const ortDist = "node_modules/onnxruntime-web/dist";
+  for (const file of [
+    // Plain build: the pure-WASM (CPU) fallback path.
+    "ort-wasm-simd-threaded.mjs",
+    "ort-wasm-simd-threaded.wasm",
+    // JSEP build: the WebGPU-capable runtime (also does CPU).
+    "ort-wasm-simd-threaded.jsep.mjs",
+    "ort-wasm-simd-threaded.jsep.wasm",
+  ]) {
+    await cp(`${ortDist}/${file}`, `dist/${file}`);
+  }
 }
 
 await rm("dist", { recursive: true, force: true });

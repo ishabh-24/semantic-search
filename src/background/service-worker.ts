@@ -41,10 +41,26 @@ async function handle(request: Request): Promise<Response> {
 
 async function embedTest(): Promise<Response> {
   try {
-    const result = await embedTexts(["hello world", "semantic search over google docs"]);
+    // Index 0 is a fixed text for the determinism fingerprint; the rest
+    // pad the batch so inferMs is large enough for a stable throughput
+    // number to compare across backends (the ≥5× done-when for commit 8).
+    const BATCH = 64;
+    const texts = ["hello world"];
+    for (let i = texts.length; i < BATCH; i++) {
+      texts.push(`benchmark sentence number ${i} about quarterly planning and hiring budgets`);
+    }
+    const result = await embedTexts(texts);
+    const textsPerSec = result.inferMs > 0 ? (result.count / result.inferMs) * 1000 : 0;
     console.log(
-      `[embed] ${result.count} vectors × ${result.dims} dims; worker instance ` +
+      `[embed] ${result.count} vectors × ${result.dims} dims [${result.backend}]; ` +
+        `infer ${result.inferMs}ms → ${textsPerSec.toFixed(1)} texts/s; worker instance ` +
         `${new Date(result.workerStartedAt).toISOString()}, ${result.embedsServed} embeds served`,
+    );
+    // Determinism fingerprint: identical text must produce these exact
+    // values in every session (done-when for commit 7).
+    console.log(
+      "[embed] fingerprint('hello world')[0..3] =",
+      Array.from(result.vectors.slice(0, 4), (v) => v.toFixed(6)).join(", "),
     );
     return {
       type: "embed.testResult",
@@ -54,6 +70,9 @@ async function embedTest(): Promise<Response> {
       swStartedAt: startedAt,
       workerStartedAt: result.workerStartedAt,
       embedsServed: result.embedsServed,
+      backend: result.backend,
+      modelLoadMs: result.modelLoadMs,
+      textsPerSec,
     };
   } catch (error) {
     console.error("[embed] test failed", error);

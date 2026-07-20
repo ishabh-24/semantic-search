@@ -108,7 +108,9 @@ embedTestButton.addEventListener("click", async () => {
     const response = await sendRequest({ type: "embed.test" });
     if (response.type !== "embed.testResult") return;
     devResult.textContent = response.ok
-      ? `${response.count} vectors × ${response.dims} dims · ` +
+      ? `${response.count} vectors × ${response.dims} dims [${response.backend}] · ` +
+        `${response.textsPerSec.toFixed(0)} texts/s · ` +
+        `model loaded in ${(response.modelLoadMs / 1000).toFixed(1)}s · ` +
         `worker up since ${new Date(response.workerStartedAt).toLocaleTimeString()} ` +
         `(${response.embedsServed} embeds served) · ` +
         `SW instance ${new Date(response.swStartedAt).toLocaleTimeString()}`

@@ -55,6 +55,9 @@ export type OffscreenResponse =
       vectors: number[];
       workerStartedAt: number;
       embedsServed: number;
+      backend: string;
+      modelLoadMs: number;
+      inferMs: number;
     }
   | { ok: false; error: string };
 
@@ -82,6 +85,9 @@ export type Response =
       swStartedAt: number;
       workerStartedAt: number;
       embedsServed: number;
+      backend: string;
+      modelLoadMs: number;
+      textsPerSec: number;
     }
   | { type: "embed.testResult"; ok: false; error: string };
 

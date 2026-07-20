@@ -39,6 +39,9 @@ export type EmbedResult = {
   count: number;
   workerStartedAt: number;
   embedsServed: number;
+  backend: string;
+  modelLoadMs: number;
+  inferMs: number;
 };
 
 let nextRequestId = 1;
@@ -60,5 +63,8 @@ export async function embedTexts(texts: string[]): Promise<EmbedResult> {
     count: response.count,
     workerStartedAt: response.workerStartedAt,
     embedsServed: response.embedsServed,
+    backend: response.backend,
+    modelLoadMs: response.modelLoadMs,
+    inferMs: response.inferMs,
   };
 }

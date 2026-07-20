@@ -2,7 +2,10 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "lib": ["ES2022", "WebWorker"],
-    "types": []
+    "types": [],
+    // transformers.js type declarations reference DOM types (canvas,
+    // image) that don't exist under the WebWorker lib.
+    "skipLibCheck": true
   },
   "include": ["src/workers", "src/shared/worker-protocol.ts"],
   "exclude": []

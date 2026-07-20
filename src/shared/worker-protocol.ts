@@ -14,5 +14,11 @@ export type WorkerResponse =
       /** Identifies the worker instance — proves warmth across SW restarts. */
       workerStartedAt: number;
       embedsServed: number;
+      /** Active inference backend ("webgpu" or "wasm"). */
+      backend: string;
+      /** Wall time of the last pipeline load; 0 until the model is ready. */
+      modelLoadMs: number;
+      /** Compute time of this embed call only (excludes messaging). */
+      inferMs: number;
     }
   | { id: number; ok: false; error: string };
