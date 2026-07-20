@@ -8,7 +8,7 @@
         color-scheme: light dark;
       }
       body {
-        width: 360px;
+        width: 380px;
         margin: 0;
         padding: 12px;
         font-family: system-ui, sans-serif;
@@ -21,23 +21,50 @@
       #query {
         width: 100%;
         box-sizing: border-box;
-        padding: 6px 8px;
+        padding: 7px 9px;
         font-size: 14px;
       }
       #status {
-        margin-top: 8px;
+        margin: 8px 0;
         font-size: 12px;
         opacity: 0.7;
       }
-      #connect,
-      #list-docs,
-      #export-all,
-      #embed-test,
-      #embed-bench {
+      button {
         margin-top: 4px;
         padding: 6px 12px;
         font-size: 13px;
         cursor: pointer;
+      }
+      #results {
+        margin-top: 8px;
+      }
+      .result {
+        padding: 8px 6px;
+        border-top: 1px solid rgba(128, 128, 128, 0.25);
+        cursor: pointer;
+      }
+      .result:hover {
+        background: rgba(128, 128, 128, 0.12);
+      }
+      .result-title {
+        font-weight: 600;
+      }
+      .result-crumb {
+        font-size: 11px;
+        opacity: 0.6;
+      }
+      .result-snippet {
+        margin-top: 2px;
+        font-size: 12px;
+        opacity: 0.85;
+      }
+      .hint {
+        font-size: 12px;
+        opacity: 0.6;
+      }
+      details {
+        margin-top: 12px;
+        font-size: 12px;
       }
       #dev-result {
         margin-top: 8px;
@@ -48,15 +75,21 @@
   </head>
   <body>
     <h1>Drive Semantic Search</h1>
-    <input id="query" type="search" placeholder="Search your Docs… (coming soon)" disabled />
+    <input id="query" type="search" placeholder="Search your Docs…" autofocus />
     <p id="status">Checking Google Drive connection…</p>
     <button id="connect" hidden>Connect Google Drive</button>
-    <!-- Dev-only trigger; replaced by the real indexing flow in commit 14. -->
-    <button id="list-docs" hidden>List Docs (dev)</button>
-    <button id="export-all" hidden>Export All (dev)</button>
-    <button id="embed-test">Test Embed (dev)</button>
-    <button id="embed-bench">Bench Batching (dev)</button>
-    <p id="dev-result" hidden></p>
+    <button id="index-now" hidden>Index my Docs (dev)</button>
+    <div id="results"></div>
+
+    <details>
+      <summary>Dev tools</summary>
+      <button id="list-docs" hidden>List Docs</button>
+      <button id="export-all" hidden>Export All</button>
+      <button id="embed-test">Test Embed</button>
+      <button id="embed-bench">Bench Batching</button>
+      <p id="dev-result" hidden></p>
+    </details>
+
     <script type="module" src="popup.js"></script>
   </body>
 </html>

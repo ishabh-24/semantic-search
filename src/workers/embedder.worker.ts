@@ -1,5 +1,14 @@
 import { env, pipeline, type FeatureExtractionPipeline } from "@huggingface/transformers";
-import type { WorkerRequest, WorkerResponse } from "../shared/worker-protocol";
+import type {
+  ChunkRecord,
+  DocHit,
+  WorkerRequest,
+  WorkerResponse,
+} from "../shared/worker-protocol";
+import { VectorIndex } from "../retrieval/vector-index";
+import { LexicalIndex } from "../retrieval/lexical-index";
+import { reciprocalRankFusion } from "../retrieval/fusion";
+import { planBatches, DEFAULT_BATCH_OPTIONS } from "../indexing/batching";
 
 // Real embedder: all-MiniLM-L6-v2 via transformers.js on the ONNX WASM
 // backend. Model weights are DATA and may come from the network (pinned
@@ -118,29 +127,127 @@ async function embed(
   return { vectors, dims, inferMs };
 }
 
-self.addEventListener("message", (event) => {
-  const request = (event as MessageEvent).data as WorkerRequest;
-  if (request.type !== "embed") return;
+// ---- In-memory hybrid index (lives here so vectors never cross a boundary).
 
-  embed(request.texts).then(
-    ({ vectors, dims, inferMs }) => {
-      embedsServed++;
-      const response: WorkerResponse = {
-        id: request.id,
-        ok: true,
-        dims,
-        vectors,
-        workerStartedAt,
-        embedsServed,
-        backend: activeBackend,
-        modelLoadMs,
-        inferMs,
-      };
-      postMessage(response, [vectors.buffer]);
-    },
-    (error) => {
-      const response: WorkerResponse = { id: request.id, ok: false, error: String(error) };
-      postMessage(response);
-    },
+const vectorIndex = new VectorIndex(EXPECTED_DIMS);
+const lexicalIndex = new LexicalIndex();
+const metadata = new Map<string, ChunkRecord>();
+
+/** Embeds a set of chunks (length-sorted batching to cut padding waste) and
+ *  adds them to the vector index, lexical index, and metadata map. */
+async function addChunks(chunks: ChunkRecord[]): Promise<number> {
+  const texts = chunks.map((c) => c.text);
+  for (const batch of planBatches(texts, DEFAULT_BATCH_OPTIONS)) {
+    const { vectors } = await embed(batch.map((i) => texts[i]!));
+    vectorIndex.addBatch(
+      batch.map((i) => chunks[i]!.id),
+      vectors,
+    );
+  }
+  lexicalIndex.add(
+    chunks.map((c) => ({
+      id: c.id,
+      text: c.text,
+      title: c.docName,
+      breadcrumbs: c.breadcrumbs.join(" › "),
+    })),
   );
+  for (const c of chunks) metadata.set(c.id, c);
+  return vectorIndex.size;
+}
+
+function makeSnippet(text: string, max = 180): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  return clean.length > max ? `${clean.slice(0, max).trimEnd()}…` : clean;
+}
+
+async function search(query: string, k: number): Promise<DocHit[]> {
+  if (!query.trim() || vectorIndex.size === 0) return [];
+  const { vectors: queryVec } = await embed([query]);
+
+  // Pull more candidates than k from each ranker so fusion has material to
+  // work with before we collapse to one hit per document.
+  const candidates = Math.max(k * 5, 50);
+  const vecHits = vectorIndex.search(queryVec, candidates);
+  const lexHits = lexicalIndex.search(query, candidates);
+
+  const fused = reciprocalRankFusion([vecHits, lexHits], {
+    recencyOf: (id) => {
+      const m = metadata.get(id);
+      return m ? Date.parse(m.modifiedTime) || 0 : 0;
+    },
+  });
+
+  // Doc-level results: keep the highest-ranked chunk per document.
+  const seenDocs = new Set<string>();
+  const hits: DocHit[] = [];
+  for (const hit of fused) {
+    const m = metadata.get(hit.id);
+    if (!m || seenDocs.has(m.docId)) continue;
+    seenDocs.add(m.docId);
+    hits.push({
+      docId: m.docId,
+      docName: m.docName,
+      breadcrumbs: m.breadcrumbs,
+      snippet: makeSnippet(m.text),
+      score: hit.score,
+      chunkId: m.id,
+    });
+    if (hits.length >= k) break;
+  }
+  return hits;
+}
+
+function reply(response: WorkerResponse, transfer: Transferable[] = []): void {
+  postMessage(response, transfer);
+}
+
+self.addEventListener("message", async (event) => {
+  const request = (event as MessageEvent).data as WorkerRequest;
+  try {
+    switch (request.type) {
+      case "embed": {
+        const { vectors, dims, inferMs } = await embed(request.texts);
+        embedsServed++;
+        reply(
+          {
+            id: request.id,
+            ok: true,
+            type: "embed",
+            dims,
+            vectors,
+            workerStartedAt,
+            embedsServed,
+            backend: activeBackend,
+            modelLoadMs,
+            inferMs,
+          },
+          [vectors.buffer],
+        );
+        break;
+      }
+      case "index.add": {
+        const indexSize = await addChunks(request.chunks);
+        reply({ id: request.id, ok: true, type: "index.add", indexSize });
+        break;
+      }
+      case "search": {
+        const hits = await search(request.query, request.k);
+        reply({ id: request.id, ok: true, type: "search", hits, indexSize: vectorIndex.size });
+        break;
+      }
+      case "index.stats": {
+        reply({
+          id: request.id,
+          ok: true,
+          type: "index.stats",
+          indexSize: vectorIndex.size,
+          backend: activeBackend,
+        });
+        break;
+      }
+    }
+  } catch (error) {
+    reply({ id: request.id, ok: false, error: String(error) });
+  }
 });
