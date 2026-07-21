@@ -31,6 +31,19 @@ export type DocMeta = {
   modifiedTime: string;
 };
 
+/** Snapshot of the background indexing job, shown in the popup. */
+export type IndexProgress = {
+  status: "idle" | "running" | "paused" | "done" | "error";
+  doneDocs: number;
+  totalDocs: number;
+  doneChunks: number;
+  /** Active embedding backend, or "" before the job has started. */
+  backend: string;
+  /** Estimated seconds remaining, or null when not yet estimable. */
+  etaSeconds: number | null;
+  error?: string;
+};
+
 export type Request =
   | { type: "ping" }
   | { type: "auth.getStatus" }
@@ -39,7 +52,10 @@ export type Request =
   | { type: "drive.exportAll" }
   | { type: "embed.test" }
   | { type: "embed.bench" }
-  | { type: "index.run" }
+  | { type: "index.start" }
+  | { type: "index.pause" }
+  | { type: "index.resume" }
+  | { type: "index.status" }
   | { type: "search"; query: string };
 
 /** Service worker → offscreen document. Runtime messages are broadcast to
@@ -65,7 +81,14 @@ export type OffscreenResponse =
     }
   | { id: number; ok: true; type: "index.add"; indexSize: number }
   | { id: number; ok: true; type: "search"; hits: DocHit[]; indexSize: number }
-  | { id: number; ok: true; type: "index.stats"; indexSize: number; backend: string }
+  | {
+      id: number;
+      ok: true;
+      type: "index.stats";
+      indexSize: number;
+      backend: string;
+      workerStartedAt: number;
+    }
   | { id: number; ok: false; error: string };
 
 export type Response =
@@ -108,8 +131,7 @@ export type Response =
       sortedTps: number;
     }
   | { type: "embed.benchResult"; ok: false; error: string }
-  | { type: "index.done"; ok: true; docs: number; chunks: number; indexSize: number }
-  | { type: "index.done"; ok: false; error: string }
+  | { type: "index.progress"; progress: IndexProgress }
   | { type: "search.results"; ok: true; hits: DocHit[]; indexSize: number }
   | { type: "search.results"; ok: false; error: string };
 

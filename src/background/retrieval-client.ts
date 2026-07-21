@@ -22,3 +22,21 @@ export async function searchDocs(
   if (response.type !== "search") throw new Error(`unexpected response ${response.type}`);
   return { hits: response.hits, indexSize: response.indexSize };
 }
+
+/** Current worker index size, backend, and instance id. The instance id
+ *  lets the indexer detect a wiped index (worker restart) before trusting a
+ *  persisted resume cursor. */
+export async function indexStats(): Promise<{
+  indexSize: number;
+  backend: string;
+  workerStartedAt: number;
+}> {
+  const response = await callWorker({ type: "index.stats" });
+  if (!response.ok) throw new Error(`index.stats failed: ${response.error}`);
+  if (response.type !== "index.stats") throw new Error(`unexpected response ${response.type}`);
+  return {
+    indexSize: response.indexSize,
+    backend: response.backend,
+    workerStartedAt: response.workerStartedAt,
+  };
+}

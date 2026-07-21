@@ -48,5 +48,15 @@ export type WorkerResponse =
     }
   | { id: number; ok: true; type: "index.add"; indexSize: number }
   | { id: number; ok: true; type: "search"; hits: DocHit[]; indexSize: number }
-  | { id: number; ok: true; type: "index.stats"; indexSize: number; backend: string }
+  | {
+      id: number;
+      ok: true;
+      type: "index.stats";
+      indexSize: number;
+      backend: string;
+      /** Identifies the worker instance holding this in-memory index. If it
+       *  changes, the index was wiped (worker/browser restart) and a resumed
+       *  job must re-index rather than trust its cursor. */
+      workerStartedAt: number;
+    }
   | { id: number; ok: false; error: string };

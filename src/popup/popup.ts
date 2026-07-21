@@ -1,9 +1,12 @@
-import { sendRequest, type AuthStatus } from "../shared/messages";
+import { sendRequest, type AuthStatus, type IndexProgress } from "../shared/messages";
 import type { DocHit } from "../shared/worker-protocol";
 
 const status = document.getElementById("status")!;
 const connectButton = document.getElementById("connect") as HTMLButtonElement;
-const indexNowButton = document.getElementById("index-now") as HTMLButtonElement;
+const indexPanel = document.getElementById("index-panel")!;
+const indexAction = document.getElementById("index-action") as HTMLButtonElement;
+const indexBar = document.getElementById("index-bar") as HTMLProgressElement;
+const indexProgress = document.getElementById("index-progress")!;
 const query = document.getElementById("query") as HTMLInputElement;
 const resultsEl = document.getElementById("results")!;
 const devResult = document.getElementById("dev-result")!;
@@ -12,9 +15,10 @@ const devResult = document.getElementById("dev-result")!;
 
 function render(auth: AuthStatus): void {
   connectButton.hidden = auth.state === "connected";
-  indexNowButton.hidden = auth.state !== "connected";
+  indexPanel.hidden = auth.state !== "connected";
   (document.getElementById("list-docs") as HTMLButtonElement).hidden = auth.state !== "connected";
   (document.getElementById("export-all") as HTMLButtonElement).hidden = auth.state !== "connected";
+  if (auth.state === "connected") void refreshIndex();
 
   if (auth.state === "connected") {
     status.textContent = auth.email
@@ -137,21 +141,79 @@ query.addEventListener("input", () => {
   debounce = setTimeout(() => void runSearch(query.value), 200);
 });
 
-// ---- Index Now (dev) ------------------------------------------------------
+// ---- Indexing job (progress, pause/resume) --------------------------------
 
-indexNowButton.addEventListener("click", async () => {
-  indexNowButton.disabled = true;
-  status.textContent = "Indexing your Docs… (progress in the SW console; this can take a while)";
-  try {
-    const response = await sendRequest({ type: "index.run" });
-    if (response.type !== "index.done") return;
-    status.textContent = response.ok
-      ? `Indexed ${response.docs} docs → ${response.indexSize} chunks. Search away.`
-      : `Indexing failed: ${response.error}`;
-    if (response.ok && query.value.trim()) void runSearch(query.value);
-  } finally {
-    indexNowButton.disabled = false;
+let lastIndexStatus: IndexProgress["status"] = "idle";
+let pollTimer: ReturnType<typeof setTimeout> | undefined;
+
+function formatEta(seconds: number | null): string {
+  if (seconds === null) return "estimating…";
+  if (seconds < 60) return `~${seconds}s left`;
+  return `~${Math.round(seconds / 60)}m left`;
+}
+
+function renderIndex(p: IndexProgress): void {
+  lastIndexStatus = p.status;
+  const active = p.status === "running" || p.status === "paused";
+  const pct = p.totalDocs > 0 ? Math.round((p.doneDocs / p.totalDocs) * 100) : 0;
+
+  indexBar.hidden = !active;
+  indexBar.value = pct;
+  indexProgress.hidden = p.status === "idle";
+
+  switch (p.status) {
+    case "idle":
+      indexAction.textContent = "Index my Docs";
+      indexAction.disabled = false;
+      break;
+    case "running":
+      indexAction.textContent = "Pause";
+      indexAction.disabled = false;
+      indexProgress.textContent =
+        `Indexing ${p.doneDocs}/${p.totalDocs} docs · ${p.doneChunks} chunks · ` +
+        `${p.backend || "…"} · ${formatEta(p.etaSeconds)}`;
+      break;
+    case "paused":
+      indexAction.textContent = "Resume";
+      indexAction.disabled = false;
+      indexProgress.textContent = `Paused at ${p.doneDocs}/${p.totalDocs} docs · ${p.doneChunks} chunks`;
+      break;
+    case "done":
+      indexAction.textContent = "Re-index";
+      indexAction.disabled = false;
+      indexProgress.textContent = `Indexed ${p.doneDocs} docs · ${p.doneChunks} chunks`;
+      break;
+    case "error":
+      indexAction.textContent = "Retry";
+      indexAction.disabled = false;
+      indexProgress.textContent = p.error ?? "Indexing failed.";
+      break;
   }
+
+  // Poll while the job is actively running; stop otherwise.
+  clearTimeout(pollTimer);
+  if (p.status === "running") pollTimer = setTimeout(() => void refreshIndex(), 500);
+}
+
+async function refreshIndex(): Promise<void> {
+  const response = await sendRequest({ type: "index.status" });
+  if (response.type === "index.progress") {
+    renderIndex(response.progress);
+    // Surface freshly-indexed docs without needing a keystroke.
+    if (query.value.trim()) void runSearch(query.value);
+  }
+}
+
+indexAction.addEventListener("click", async () => {
+  const request =
+    lastIndexStatus === "running"
+      ? ({ type: "index.pause" } as const)
+      : lastIndexStatus === "paused"
+        ? ({ type: "index.resume" } as const)
+        : ({ type: "index.start" } as const);
+  indexAction.disabled = true;
+  const response = await sendRequest(request);
+  if (response.type === "index.progress") renderIndex(response.progress);
 });
 
 // ---- Dev tools ------------------------------------------------------------

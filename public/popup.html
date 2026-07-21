@@ -35,6 +35,18 @@
         font-size: 13px;
         cursor: pointer;
       }
+      #index-panel {
+        margin: 4px 0 8px;
+      }
+      #index-bar {
+        width: 100%;
+        height: 8px;
+        display: block;
+        margin-top: 6px;
+      }
+      #index-progress {
+        margin-top: 4px;
+      }
       #results {
         margin-top: 8px;
       }
@@ -78,7 +90,13 @@
     <input id="query" type="search" placeholder="Search your Docs…" autofocus />
     <p id="status">Checking Google Drive connection…</p>
     <button id="connect" hidden>Connect Google Drive</button>
-    <button id="index-now" hidden>Index my Docs (dev)</button>
+
+    <div id="index-panel" hidden>
+      <button id="index-action"></button>
+      <progress id="index-bar" max="100" value="0" hidden></progress>
+      <div id="index-progress" class="hint" hidden></div>
+    </div>
+
     <div id="results"></div>
 
     <details>

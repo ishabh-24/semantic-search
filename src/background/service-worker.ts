@@ -1,14 +1,17 @@
-import type { Request, Response } from "../shared/messages";
-import type { ChunkRecord } from "../shared/worker-protocol";
+import type { IndexProgress, Request, Response } from "../shared/messages";
 import { AuthRequiredError, getAuthStatus, signIn } from "./auth";
 import { exportDocs, listAllDocs } from "./drive";
 import { embedTexts, embedBatched } from "./embedder-client";
-import { indexChunks, searchDocs } from "./retrieval-client";
-import { chunkDoc } from "../indexing/chunker";
+import { searchDocs } from "./retrieval-client";
+import {
+  getIndexProgress,
+  maybeResumeOnStartup,
+  pauseIndex,
+  resumeIndex,
+  startIndex,
+} from "./indexer";
 
 const SEARCH_K = 10;
-/** Chunks per index.add message — bounds message size and gives progress. */
-const INDEX_SLICE = 200;
 
 // MV3 service workers are killed after ~30s of inactivity and restarted on
 // demand. Top-level code runs on every (re)start, so this timestamp
@@ -29,6 +32,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
+// If a first-run index job was interrupted by this worker being killed,
+// pick it up again on restart.
+void maybeResumeOnStartup();
+
 async function handle(request: Request): Promise<Response> {
   switch (request.type) {
     case "ping":
@@ -45,48 +52,40 @@ async function handle(request: Request): Promise<Response> {
       return embedTest();
     case "embed.bench":
       return embedBench();
-    case "index.run":
-      return indexRun();
+    case "index.start":
+      return indexControl(startIndex);
+    case "index.pause":
+      return indexControl(pauseIndex);
+    case "index.resume":
+      return indexControl(resumeIndex);
+    case "index.status":
+      return indexControl(getIndexProgress);
     case "search":
       return runSearch(request.query);
   }
 }
 
-// Dev "Index Now": export → chunk → embed+index the whole corpus. The
-// polished, resumable, progress-reporting version is commit 14; this proves
-// the pipeline end-to-end so search is demoable.
-async function indexRun(): Promise<Response> {
+// All four index.* controls return the same progress snapshot; start/resume
+// surface a disconnected Drive as an error status rather than throwing.
+async function indexControl(action: () => Promise<IndexProgress>): Promise<Response> {
   try {
-    const docs = await listAllDocs();
-    const { exported, failed } = await exportDocs(docs);
-
-    const chunks: ChunkRecord[] = [];
-    for (const { doc, markdown } of exported) {
-      for (const c of chunkDoc(doc, markdown)) {
-        chunks.push({
-          id: c.id,
-          docId: c.docId,
-          docName: doc.name,
-          breadcrumbs: c.breadcrumbs,
-          text: c.text,
-          modifiedTime: doc.modifiedTime,
-        });
-      }
-    }
-    console.log(`[index] ${exported.length} docs → ${chunks.length} chunks (${failed.length} export failures)`);
-
-    let indexSize = 0;
-    for (let i = 0; i < chunks.length; i += INDEX_SLICE) {
-      indexSize = await indexChunks(chunks.slice(i, i + INDEX_SLICE));
-      console.log(`[index] embedded ${Math.min(i + INDEX_SLICE, chunks.length)}/${chunks.length}`);
-    }
-    return { type: "index.done", ok: true, docs: exported.length, chunks: chunks.length, indexSize };
+    return { type: "index.progress", progress: await action() };
   } catch (error) {
-    if (error instanceof AuthRequiredError) {
-      return { type: "index.done", ok: false, error: "Not connected to Google Drive." };
-    }
-    console.error("[index] run failed", error);
-    return { type: "index.done", ok: false, error: String(error) };
+    const message =
+      error instanceof AuthRequiredError ? "Not connected to Google Drive." : String(error);
+    console.error("[index] control failed", error);
+    return {
+      type: "index.progress",
+      progress: {
+        status: "error",
+        doneDocs: 0,
+        totalDocs: 0,
+        doneChunks: 0,
+        backend: "",
+        etaSeconds: null,
+        error: message,
+      },
+    };
   }
 }
 

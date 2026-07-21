@@ -134,25 +134,31 @@ const lexicalIndex = new LexicalIndex();
 const metadata = new Map<string, ChunkRecord>();
 
 /** Embeds a set of chunks (length-sorted batching to cut padding waste) and
- *  adds them to the vector index, lexical index, and metadata map. */
+ *  adds them to the vector index, lexical index, and metadata map.
+ *  Idempotent: chunk ids already present are skipped, so a resumed job that
+ *  replays a partially-indexed doc can't double-add (MiniSearch also rejects
+ *  duplicate ids). */
 async function addChunks(chunks: ChunkRecord[]): Promise<number> {
-  const texts = chunks.map((c) => c.text);
+  const fresh = chunks.filter((c) => !metadata.has(c.id));
+  if (fresh.length === 0) return vectorIndex.size;
+
+  const texts = fresh.map((c) => c.text);
   for (const batch of planBatches(texts, DEFAULT_BATCH_OPTIONS)) {
     const { vectors } = await embed(batch.map((i) => texts[i]!));
     vectorIndex.addBatch(
-      batch.map((i) => chunks[i]!.id),
+      batch.map((i) => fresh[i]!.id),
       vectors,
     );
   }
   lexicalIndex.add(
-    chunks.map((c) => ({
+    fresh.map((c) => ({
       id: c.id,
       text: c.text,
       title: c.docName,
       breadcrumbs: c.breadcrumbs.join(" › "),
     })),
   );
-  for (const c of chunks) metadata.set(c.id, c);
+  for (const c of fresh) metadata.set(c.id, c);
   return vectorIndex.size;
 }
 
@@ -243,6 +249,7 @@ self.addEventListener("message", async (event) => {
           type: "index.stats",
           indexSize: vectorIndex.size,
           backend: activeBackend,
+          workerStartedAt,
         });
         break;
       }
