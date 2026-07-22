@@ -1,5 +1,7 @@
 node_modules/
 key.pem
+.claude/settings.local.json
+eval/.build/
 dist/
 *.log
 .DS_Store

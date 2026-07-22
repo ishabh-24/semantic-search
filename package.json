@@ -9,7 +9,8 @@
     "watch": "node build.mjs --watch",
     "typecheck": "tsc --noEmit && tsc --noEmit -p tsconfig.worker.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "eval": "esbuild eval/run-eval.ts --bundle --platform=node --format=esm --packages=external --outfile=eval/.build/run-eval.mjs && node eval/.build/run-eval.mjs"
   },
   "devDependencies": {
     "@types/chrome": "^0.0.328",

@@ -35,3 +35,26 @@ quantization preserves recall@5 within noise of float32.
 - Breakdown at 60k: int8 vectors + per-vector scales ≈ 23.3MB fixed; gzipped
   chunk text ≈ the remainder. Vectors dominate, so size scales ~linearly.
 
+## Retrieval quality — lexical vs semantic vs hybrid
+
+**Claim (commit 19):** hybrid retrieval matches or beats either single mode.
+
+48 labeled queries over a 16-doc fixture corpus (`eval/corpus.ts`), split
+between exact-name/ID lookups and paraphrase/conceptual asks. Run: `npm run
+eval` (embeds with the shipped MiniLM config and drives the real retrieval
+modules).
+
+| mode | recall@1 | recall@5 | MRR |
+|------|----------|----------|-----|
+| lexical | 0.917 | 1.000 | 0.958 |
+| semantic | 0.896 | 0.979 | 0.936 |
+| **hybrid** | **1.000** | **1.000** | **1.000** |
+
+- recall@5 saturates at this corpus size (right doc in top-5 of 16 is easy),
+  so recall@1 and MRR are the discriminating metrics.
+- Hybrid ranks the correct doc #1 on every query: RRF combines lexical's
+  edge on exact names/IDs with semantic's edge on paraphrases, recovering the
+  handful each single mode misses at rank 1. No query was authored to be
+  unsolvable by a single mode — the gain is purely from fusion.
+
+
