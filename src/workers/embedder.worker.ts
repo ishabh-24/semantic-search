@@ -6,9 +6,17 @@ import type {
   WorkerResponse,
 } from "../shared/worker-protocol";
 import { VectorIndex } from "../retrieval/vector-index";
-import { LexicalIndex } from "../retrieval/lexical-index";
+import { LexicalIndex, type LexicalDoc } from "../retrieval/lexical-index";
 import { reciprocalRankFusion } from "../retrieval/fusion";
 import { planBatches, DEFAULT_BATCH_OPTIONS } from "../indexing/batching";
+import {
+  serializeIndex,
+  deserializeIndex,
+  IndexFormatError,
+  type IndexSnapshot,
+} from "../persistence/index-format";
+import { mergeSnapshots } from "../persistence/merge";
+import { findIndexFile, uploadIndex, downloadIndex } from "../persistence/drive-appdata";
 
 // Real embedder: all-MiniLM-L6-v2 via transformers.js on the ONNX WASM
 // backend. Model weights are DATA and may come from the network (pinned
@@ -129,9 +137,19 @@ async function embed(
 
 // ---- In-memory hybrid index (lives here so vectors never cross a boundary).
 
-const vectorIndex = new VectorIndex(EXPECTED_DIMS);
-const lexicalIndex = new LexicalIndex();
+let vectorIndex = new VectorIndex(EXPECTED_DIMS);
+let lexicalIndex = new LexicalIndex();
 const metadata = new Map<string, ChunkRecord>();
+
+function lexicalDoc(c: ChunkRecord): LexicalDoc {
+  return { id: c.id, text: c.text, title: c.docName, breadcrumbs: c.breadcrumbs.join(" › ") };
+}
+
+function docCount(): number {
+  const docs = new Set<string>();
+  for (const c of metadata.values()) docs.add(c.docId);
+  return docs.size;
+}
 
 /** Embeds a set of chunks (length-sorted batching to cut padding waste) and
  *  adds them to the vector index, lexical index, and metadata map.
@@ -150,16 +168,107 @@ async function addChunks(chunks: ChunkRecord[]): Promise<number> {
       vectors,
     );
   }
-  lexicalIndex.add(
-    fresh.map((c) => ({
-      id: c.id,
-      text: c.text,
-      title: c.docName,
-      breadcrumbs: c.breadcrumbs.join(" › "),
-    })),
-  );
+  lexicalIndex.add(fresh.map(lexicalDoc));
   for (const c of fresh) metadata.set(c.id, c);
   return vectorIndex.size;
+}
+
+// headRevisionId of the Drive blob this worker last loaded or wrote. Used to
+// detect a concurrent write from another device before we overwrite it. Null
+// means we've never reconciled with Drive, so any existing remote counts as a
+// divergence to be merged (not clobbered).
+let loadedRevisionId: string | null = null;
+
+function buildSnapshot(): IndexSnapshot {
+  const { ids, vectors } = vectorIndex.snapshot();
+  return {
+    modelId: MODEL_ID,
+    revision: MODEL_REVISION,
+    dims: EXPECTED_DIMS,
+    vectors,
+    chunks: ids.map((id) => metadata.get(id)!),
+  };
+}
+
+/** Replaces the live index with a snapshot — no re-embedding. */
+function populateFromSnapshot(snapshot: IndexSnapshot): void {
+  vectorIndex = new VectorIndex(EXPECTED_DIMS);
+  lexicalIndex = new LexicalIndex();
+  metadata.clear();
+  vectorIndex.addBatch(
+    snapshot.chunks.map((c) => c.id),
+    snapshot.vectors,
+  );
+  lexicalIndex.add(snapshot.chunks.map(lexicalDoc));
+  for (const c of snapshot.chunks) metadata.set(c.id, c);
+}
+
+/** Deserializes a remote blob for merging, or null if it's unusable (corrupt
+ *  or a different embedding model — we won't fold incompatible vectors in). */
+async function readRemote(buffer: ArrayBuffer): Promise<IndexSnapshot | null> {
+  try {
+    const snapshot = await deserializeIndex(buffer);
+    if (snapshot.modelId !== MODEL_ID || snapshot.revision !== MODEL_REVISION) return null;
+    return snapshot;
+  } catch (error) {
+    if (error instanceof IndexFormatError) return null;
+    throw error;
+  }
+}
+
+/** Serializes the live index and writes it to Drive appDataFolder. If another
+ *  device wrote since we last synced (headRevisionId changed), downloads and
+ *  merges its index first (union of docs, last-write-wins per doc) so no
+ *  device's work is lost, then re-checks and retries until our write is the
+ *  latest. Vectors never leave the worker. */
+async function saveIndex(token: string): Promise<{ fileId: string; sizeBytes: number }> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const remote = await findIndexFile(token);
+
+    if (remote && remote.headRevisionId !== loadedRevisionId) {
+      const remoteSnapshot = await readRemote(await downloadIndex(token, remote.id));
+      if (remoteSnapshot) {
+        const before = vectorIndex.size;
+        populateFromSnapshot(mergeSnapshots(buildSnapshot(), remoteSnapshot));
+        console.log(
+          `[worker] merged concurrent write from another device: ` +
+            `${before} local + ${remoteSnapshot.chunks.length} remote chunks → ${vectorIndex.size} union`,
+        );
+      }
+      loadedRevisionId = remote.headRevisionId; // we've now incorporated it
+    }
+
+    const buffer = await serializeIndex(buildSnapshot());
+    const written = await uploadIndex(token, remote?.id ?? null, buffer);
+
+    // Confirm nothing landed between our merge and our write; if it did, loop
+    // to fold that change in too.
+    const after = await findIndexFile(token);
+    if (after && after.headRevisionId === written.headRevisionId) {
+      loadedRevisionId = written.headRevisionId;
+      return { fileId: written.id, sizeBytes: buffer.byteLength };
+    }
+  }
+  throw new Error("index save kept losing a write race after several retries");
+}
+
+/** Restores the index from Drive with zero re-embedding. Returns loaded:false
+ *  (not an error) when there's nothing to restore or the blob is unusable —
+ *  network failures still throw so the caller can distinguish them. */
+async function loadIndex(
+  token: string,
+): Promise<{ loaded: boolean; indexSize: number; docCount: number; reason?: string }> {
+  const ref = await findIndexFile(token);
+  if (!ref) return { loaded: false, indexSize: 0, docCount: 0, reason: "no saved index" };
+
+  const snapshot = await readRemote(await downloadIndex(token, ref.id));
+  if (!snapshot) {
+    return { loaded: false, indexSize: 0, docCount: 0, reason: "saved index is corrupt or from a different model" };
+  }
+
+  populateFromSnapshot(snapshot);
+  loadedRevisionId = ref.headRevisionId;
+  return { loaded: true, indexSize: vectorIndex.size, docCount: docCount() };
 }
 
 function makeSnippet(text: string, max = 180): string {
@@ -248,9 +357,20 @@ self.addEventListener("message", async (event) => {
           ok: true,
           type: "index.stats",
           indexSize: vectorIndex.size,
+          docCount: docCount(),
           backend: activeBackend,
           workerStartedAt,
         });
+        break;
+      }
+      case "index.save": {
+        const { fileId, sizeBytes } = await saveIndex(request.token);
+        reply({ id: request.id, ok: true, type: "index.save", fileId, sizeBytes });
+        break;
+      }
+      case "index.load": {
+        const result = await loadIndex(request.token);
+        reply({ id: request.id, ok: true, type: "index.load", ...result });
         break;
       }
     }

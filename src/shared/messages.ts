@@ -86,8 +86,19 @@ export type OffscreenResponse =
       ok: true;
       type: "index.stats";
       indexSize: number;
+      docCount: number;
       backend: string;
       workerStartedAt: number;
+    }
+  | { id: number; ok: true; type: "index.save"; fileId: string; sizeBytes: number }
+  | {
+      id: number;
+      ok: true;
+      type: "index.load";
+      loaded: boolean;
+      indexSize: number;
+      docCount: number;
+      reason?: string;
     }
   | { id: number; ok: false; error: string };
 

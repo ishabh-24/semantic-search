@@ -30,7 +30,11 @@ export type WorkerRequest =
   | { id: number; type: "embed"; texts: string[] }
   | { id: number; type: "index.add"; chunks: ChunkRecord[] }
   | { id: number; type: "search"; query: string; k: number }
-  | { id: number; type: "index.stats" };
+  | { id: number; type: "index.stats" }
+  // SW injects a fresh OAuth token; the worker does the Drive I/O itself so
+  // the ~24MB blob never crosses a message boundary.
+  | { id: number; type: "index.save"; token: string }
+  | { id: number; type: "index.load"; token: string };
 
 export type WorkerResponse =
   | {
@@ -53,10 +57,24 @@ export type WorkerResponse =
       ok: true;
       type: "index.stats";
       indexSize: number;
+      /** Distinct documents represented in the index. */
+      docCount: number;
       backend: string;
       /** Identifies the worker instance holding this in-memory index. If it
        *  changes, the index was wiped (worker/browser restart) and a resumed
        *  job must re-index rather than trust its cursor. */
       workerStartedAt: number;
+    }
+  | { id: number; ok: true; type: "index.save"; fileId: string; sizeBytes: number }
+  | {
+      id: number;
+      ok: true;
+      type: "index.load";
+      /** False when nothing was restored (no saved blob, corrupt, or a
+       *  different embedding model); reason explains why. */
+      loaded: boolean;
+      indexSize: number;
+      docCount: number;
+      reason?: string;
     }
   | { id: number; ok: false; error: string };

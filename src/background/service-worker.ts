@@ -5,6 +5,7 @@ import { embedTexts, embedBatched } from "./embedder-client";
 import { searchDocs } from "./retrieval-client";
 import {
   getIndexProgress,
+  loadIndexOnStartup,
   maybeResumeOnStartup,
   pauseIndex,
   resumeIndex,
@@ -32,9 +33,9 @@ chrome.alarms.onAlarm.addListener((alarm) => {
   }
 });
 
-// If a first-run index job was interrupted by this worker being killed,
-// pick it up again on restart.
-void maybeResumeOnStartup();
+// On startup: restore a saved index from Drive (so search works with zero
+// re-embedding), then resume any first-run job the worker death interrupted.
+void loadIndexOnStartup().then(() => maybeResumeOnStartup());
 
 async function handle(request: Request): Promise<Response> {
   switch (request.type) {
@@ -42,8 +43,13 @@ async function handle(request: Request): Promise<Response> {
       return { type: "pong", startedAt };
     case "auth.getStatus":
       return { type: "auth.status", status: await getAuthStatus() };
-    case "auth.signIn":
-      return { type: "auth.status", status: await signIn() };
+    case "auth.signIn": {
+      const status = await signIn();
+      // First sign-in on a fresh profile: pull any saved index from Drive now
+      // (startup load already ran before we were connected).
+      if (status.state === "connected") void loadIndexOnStartup();
+      return { type: "auth.status", status };
+    }
     case "drive.listDocs":
       return listDocs();
     case "drive.exportAll":

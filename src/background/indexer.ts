@@ -1,9 +1,9 @@
 import type { DocMeta, IndexProgress } from "../shared/messages";
 import type { ChunkRecord } from "../shared/worker-protocol";
 import { chunkDoc } from "../indexing/chunker";
-import { AuthRequiredError } from "./auth";
+import { AuthRequiredError, getApiToken } from "./auth";
 import { listAllDocs, exportDocMarkdown } from "./drive";
-import { indexChunks, indexStats } from "./retrieval-client";
+import { indexChunks, indexStats, saveIndex, loadIndex } from "./retrieval-client";
 
 // Background first-run indexing job. The unit of progress and resumability
 // is one document: export → chunk → embed+index → mark done → persist the
@@ -79,7 +79,57 @@ function toProgress(job: PersistedJob | null): IndexProgress {
 
 export async function getIndexProgress(): Promise<IndexProgress> {
   currentJob ??= await loadJob();
-  return toProgress(currentJob);
+  if (currentJob) return toProgress(currentJob);
+
+  // No job this session, but an index may have been restored from Drive on
+  // startup — report it as done so the popup reflects reality.
+  try {
+    const stats = await indexStats();
+    if (stats.indexSize > 0) {
+      return {
+        status: "done",
+        doneDocs: stats.docCount,
+        totalDocs: stats.docCount,
+        doneChunks: stats.indexSize,
+        backend: stats.backend,
+        etaSeconds: null,
+      };
+    }
+  } catch {
+    // Offscreen worker not up yet; treat as idle.
+  }
+  return toProgress(null);
+}
+
+/** Restores a previously-saved index from Drive so search works with zero
+ *  re-embedding (e.g. on a fresh profile after sign-in). Skipped while a job
+ *  is actively running, which owns the index lifecycle itself. */
+export async function loadIndexOnStartup(): Promise<void> {
+  const job = await loadJob();
+  currentJob = job;
+  if (job?.status === "running") return;
+  try {
+    const token = await getApiToken(); // silent; throws if not connected
+    const result = await loadIndex(token);
+    console.log(
+      result.loaded
+        ? `[index] restored ${result.docCount} docs / ${result.indexSize} chunks from Drive`
+        : `[index] nothing restored from Drive: ${result.reason}`,
+    );
+  } catch (error) {
+    if (error instanceof AuthRequiredError) return; // not signed in yet
+    console.warn("[index] load-on-startup failed", error);
+  }
+}
+
+async function persistToDrive(): Promise<void> {
+  try {
+    const token = await getApiToken();
+    const { sizeBytes } = await saveIndex(token);
+    console.log(`[index] saved ${(sizeBytes / 1024 / 1024).toFixed(1)}MB to Drive appDataFolder`);
+  } catch (error) {
+    console.warn("[index] Drive save failed (search still works in-memory):", String(error));
+  }
 }
 
 /** Starts a fresh job over the full corpus. Idempotent worker-side add means
@@ -151,6 +201,7 @@ async function runLoop(): Promise<void> {
       if (!next) {
         job.status = "done";
         await saveJob(job);
+        await persistToDrive(); // durable + syncs across the user's devices
         break;
       }
 
