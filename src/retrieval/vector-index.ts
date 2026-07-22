@@ -23,6 +23,15 @@ export class VectorIndex {
     return this.count;
   }
 
+  /** Copies out the stored ids and row-major vectors (used to serialize the
+   *  index). Ids are aligned to vectors. */
+  snapshot(): { ids: string[]; vectors: Float32Array } {
+    return {
+      ids: this.ids.slice(0, this.count),
+      vectors: this.data.slice(0, this.count * this.dims),
+    };
+  }
+
   add(id: string, vector: ArrayLike<number>): void {
     if (vector.length !== this.dims) {
       throw new Error(`vector length ${vector.length} != dims ${this.dims}`);
