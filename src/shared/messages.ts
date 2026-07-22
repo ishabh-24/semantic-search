@@ -37,6 +37,10 @@ export type IndexProgress = {
   doneDocs: number;
   totalDocs: number;
   doneChunks: number;
+  /** Documents that couldn't be exported/indexed after retries (rate limits,
+   *  offline, oversized). Surfaced so a partial index isn't mistaken for a
+   *  complete one; a re-index retries them. */
+  failedDocs: number;
   /** Active embedding backend, or "" before the job has started. */
   backend: string;
   /** Estimated seconds remaining, or null when not yet estimable. */

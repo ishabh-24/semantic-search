@@ -87,6 +87,7 @@ async function indexControl(action: () => Promise<IndexProgress>): Promise<Respo
         doneDocs: 0,
         totalDocs: 0,
         doneChunks: 0,
+        failedDocs: 0,
         backend: "",
         etaSeconds: null,
         error: message,

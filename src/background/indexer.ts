@@ -25,6 +25,8 @@ type PersistedJob = {
   docs: DocMeta[];
   doneDocIds: string[];
   doneChunks: number;
+  /** Docs that errored during export/index (counted, then skipped). */
+  failedDocs: number;
   /** workerStartedAt of the worker the cursor was built against. */
   workerInstanceId: number;
   backend: string;
@@ -34,6 +36,10 @@ type PersistedJob = {
 
 let currentJob: PersistedJob | null = null;
 let loopActive = false;
+// Set when startup found a saved index but couldn't use it (corrupt or a
+// different model). Surfaced so the user knows to re-index rather than facing
+// a silently-empty search.
+let lastLoadIssue: string | null = null;
 // Throughput of the current running stretch, for the ETA (reset on each
 // (re)bind so pauses/restarts don't skew it). In-memory only.
 let sessionStartAt = 0;
@@ -64,13 +70,22 @@ function estimateEta(job: PersistedJob): number | null {
 
 function toProgress(job: PersistedJob | null): IndexProgress {
   if (!job) {
-    return { status: "idle", doneDocs: 0, totalDocs: 0, doneChunks: 0, backend: "", etaSeconds: null };
+    return {
+      status: "idle",
+      doneDocs: 0,
+      totalDocs: 0,
+      doneChunks: 0,
+      failedDocs: 0,
+      backend: "",
+      etaSeconds: null,
+    };
   }
   return {
     status: job.status,
     doneDocs: job.doneDocIds.length,
     totalDocs: job.docs.length,
     doneChunks: job.doneChunks,
+    failedDocs: job.failedDocs,
     backend: job.backend,
     etaSeconds: estimateEta(job),
     error: job.error,
@@ -91,12 +106,28 @@ export async function getIndexProgress(): Promise<IndexProgress> {
         doneDocs: stats.docCount,
         totalDocs: stats.docCount,
         doneChunks: stats.indexSize,
+        failedDocs: 0,
         backend: stats.backend,
         etaSeconds: null,
       };
     }
   } catch {
     // Offscreen worker not up yet; treat as idle.
+  }
+
+  // Nothing in memory. If startup found a saved index it couldn't use, say so
+  // (actionable: re-index) instead of a bare "nothing indexed".
+  if (lastLoadIssue) {
+    return {
+      status: "error",
+      doneDocs: 0,
+      totalDocs: 0,
+      doneChunks: 0,
+      failedDocs: 0,
+      backend: "",
+      etaSeconds: null,
+      error: `Couldn't load your saved index (${lastLoadIssue}). Re-index to rebuild it.`,
+    };
   }
   return toProgress(null);
 }
@@ -111,11 +142,15 @@ export async function loadIndexOnStartup(): Promise<void> {
   try {
     const token = await getApiToken(); // silent; throws if not connected
     const result = await loadIndex(token);
-    console.log(
-      result.loaded
-        ? `[index] restored ${result.docCount} docs / ${result.indexSize} chunks from Drive`
-        : `[index] nothing restored from Drive: ${result.reason}`,
-    );
+    if (result.loaded) {
+      lastLoadIssue = null;
+      console.log(`[index] restored ${result.docCount} docs / ${result.indexSize} chunks from Drive`);
+    } else {
+      // "no saved index" is benign (new user); a corrupt/mismatched blob is
+      // worth surfacing so search isn't silently empty.
+      lastLoadIssue = result.reason === "no saved index" ? null : (result.reason ?? "unknown");
+      console.log(`[index] nothing restored from Drive: ${result.reason}`);
+    }
   } catch (error) {
     if (error instanceof AuthRequiredError) return; // not signed in yet
     console.warn("[index] load-on-startup failed", error);
@@ -137,11 +172,13 @@ async function persistToDrive(): Promise<void> {
 export async function startIndex(): Promise<IndexProgress> {
   const docs = await listAllDocs(); // throws AuthRequiredError if disconnected
   const stats = await indexStats(); // also ensures the offscreen worker exists
+  lastLoadIssue = null; // starting fresh supersedes any prior load problem
   await saveJob({
     status: "running",
     docs,
     doneDocIds: [],
     doneChunks: 0,
+    failedDocs: 0,
     workerInstanceId: stats.workerStartedAt,
     backend: stats.backend,
     startedAt: Date.now(),
@@ -224,7 +261,9 @@ async function runLoop(): Promise<void> {
           await saveJob(job);
           break;
         }
-        // One bad doc (e.g. export too large) must not stall the whole job.
+        // One bad doc (rate-limited after retries, offline, oversized) must
+        // not stall the whole job — count it, skip it, keep going.
+        job.failedDocs += 1;
         console.warn(`[index] skipping "${next.name}": ${String(error)}`);
       }
 

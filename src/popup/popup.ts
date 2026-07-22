@@ -18,7 +18,9 @@ function render(auth: AuthStatus): void {
   indexPanel.hidden = auth.state !== "connected";
   (document.getElementById("list-docs") as HTMLButtonElement).hidden = auth.state !== "connected";
   (document.getElementById("export-all") as HTMLButtonElement).hidden = auth.state !== "connected";
-  if (auth.state === "connected") void refreshIndex();
+  // Note: index panel is refreshed explicitly (startup + after connect), not
+  // here — renderIndex may call back into refreshAuth on an auth-loss error,
+  // and auto-refreshing from render would risk a ping-pong loop.
 
   if (auth.state === "connected") {
     status.textContent = auth.email
@@ -63,9 +65,11 @@ async function refreshAuth(request: { type: "auth.getStatus" } | { type: "auth.s
 connectButton.addEventListener("click", () => {
   status.textContent = "Waiting for Google consent…";
   connectButton.disabled = true;
-  refreshAuth({ type: "auth.signIn" }).finally(() => {
-    connectButton.disabled = false;
-  });
+  refreshAuth({ type: "auth.signIn" })
+    .then(() => void refreshIndex())
+    .finally(() => {
+      connectButton.disabled = false;
+    });
 });
 
 // ---- Search ---------------------------------------------------------------
@@ -122,17 +126,23 @@ async function runSearch(q: string): Promise<void> {
   if (seq !== searchSeq) return;
   if (response.type !== "search.results") return;
   if (!response.ok) {
-    status.textContent = response.error;
+    // Never leave the previous results sitting there looking valid.
+    showNotice(`Search failed: ${response.error}. Try again in a moment.`);
     return;
   }
   if (response.indexSize === 0) {
-    const hint = document.createElement("p");
-    hint.className = "hint";
-    hint.textContent = "Nothing indexed yet — run “Index my Docs” first.";
-    resultsEl.replaceChildren(hint);
+    showNotice("Nothing indexed yet — run “Index my Docs” first.");
     return;
   }
   renderResults(response.hits);
+}
+
+/** Replaces the results area with a single hint/error line. */
+function showNotice(text: string): void {
+  const notice = document.createElement("p");
+  notice.className = "hint";
+  notice.textContent = text;
+  resultsEl.replaceChildren(notice);
 }
 
 let debounce: ReturnType<typeof setTimeout> | undefined;
@@ -171,7 +181,7 @@ function renderIndex(p: IndexProgress): void {
       indexAction.disabled = false;
       indexProgress.textContent =
         `Indexing ${p.doneDocs}/${p.totalDocs} docs · ${p.doneChunks} chunks · ` +
-        `${p.backend || "…"} · ${formatEta(p.etaSeconds)}`;
+        `${p.backend || "…"} · ${formatEta(p.etaSeconds)}${failedSuffix(p)}`;
       break;
     case "paused":
       indexAction.textContent = "Resume";
@@ -181,18 +191,31 @@ function renderIndex(p: IndexProgress): void {
     case "done":
       indexAction.textContent = "Re-index";
       indexAction.disabled = false;
-      indexProgress.textContent = `Indexed ${p.doneDocs} docs · ${p.doneChunks} chunks`;
+      indexProgress.textContent =
+        p.failedDocs > 0
+          ? `Indexed ${p.doneDocs - p.failedDocs} docs · ${p.doneChunks} chunks · ` +
+            `${p.failedDocs} couldn't be indexed — Re-index to retry them`
+          : `Indexed ${p.doneDocs} docs · ${p.doneChunks} chunks`;
       break;
     case "error":
       indexAction.textContent = "Retry";
       indexAction.disabled = false;
       indexProgress.textContent = p.error ?? "Indexing failed.";
+      // An auth-loss error needs a reconnect, not just a retry — refresh the
+      // auth panel so the Connect/Reconnect button reappears.
+      if (p.error && /reconnect|not connected|drive access/i.test(p.error)) {
+        void refreshAuth({ type: "auth.getStatus" });
+      }
       break;
   }
 
   // Poll while the job is actively running; stop otherwise.
   clearTimeout(pollTimer);
   if (p.status === "running") pollTimer = setTimeout(() => void refreshIndex(), 500);
+}
+
+function failedSuffix(p: IndexProgress): string {
+  return p.failedDocs > 0 ? ` · ${p.failedDocs} failed` : "";
 }
 
 async function refreshIndex(): Promise<void> {
@@ -290,3 +313,4 @@ embedBenchButton.addEventListener("click", async () => {
 });
 
 await refreshAuth({ type: "auth.getStatus" });
+void refreshIndex();
