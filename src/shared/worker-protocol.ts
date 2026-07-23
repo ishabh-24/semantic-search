@@ -29,6 +29,8 @@ export type DocHit = {
 export type WorkerRequest =
   | { id: number; type: "embed"; texts: string[] }
   | { id: number; type: "index.add"; chunks: ChunkRecord[] }
+  // Re-index a modified/added doc, re-embedding only its changed chunks.
+  | { id: number; type: "index.update"; chunks: ChunkRecord[] }
   | { id: number; type: "search"; query: string; k: number }
   | { id: number; type: "index.stats" }
   // Remove all chunks belonging to the given documents (deletions, or the old
@@ -55,6 +57,15 @@ export type WorkerResponse =
     }
   | { id: number; ok: true; type: "index.add"; indexSize: number }
   | { id: number; ok: true; type: "index.remove"; indexSize: number }
+  | {
+      id: number;
+      ok: true;
+      type: "index.update";
+      indexSize: number;
+      /** Chunks actually re-embedded vs reused from the prior version. */
+      embedded: number;
+      reused: number;
+    }
   | { id: number; ok: true; type: "search"; hits: DocHit[]; indexSize: number }
   | {
       id: number;

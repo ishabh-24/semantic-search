@@ -86,6 +86,7 @@ export type OffscreenResponse =
     }
   | { id: number; ok: true; type: "index.add"; indexSize: number }
   | { id: number; ok: true; type: "index.remove"; indexSize: number }
+  | { id: number; ok: true; type: "index.update"; indexSize: number; embedded: number; reused: number }
   | { id: number; ok: true; type: "search"; hits: DocHit[]; indexSize: number }
   | {
       id: number;

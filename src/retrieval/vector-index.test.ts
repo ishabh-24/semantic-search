@@ -90,6 +90,22 @@ describe("VectorIndex", () => {
     expect(idx.search(unit(1, 0), 2).map((h) => h.id).sort()).toEqual(["b", "c"]);
   });
 
+  it("get returns a stored vector, undefined for absent, and tracks row shifts after remove", () => {
+    const idx = new VectorIndex(2);
+    idx.add("a", unit(1, 0));
+    idx.add("b", unit(3, 4)); // stored normalized
+    idx.add("c", unit(0, 1));
+    expect(idx.get("missing")).toBeUndefined();
+    expect(Array.from(idx.get("c")!)).toEqual([0, 1]);
+    // Removing "a" shifts b,c down a row; get must still return the right vectors.
+    idx.remove(new Set(["a"]));
+    expect(idx.get("a")).toBeUndefined();
+    expect(Array.from(idx.get("c")!)).toEqual([0, 1]);
+    const b = idx.get("b")!; // 3-4-5 triangle → 0.6, 0.8 (float32, so compare with tolerance)
+    expect(b[0]).toBeCloseTo(0.6, 5);
+    expect(b[1]).toBeCloseTo(0.8, 5);
+  });
+
   it("rejects dimension mismatches", () => {
     const idx = new VectorIndex(3);
     expect(() => idx.add("bad", unit(1, 0))).toThrow();

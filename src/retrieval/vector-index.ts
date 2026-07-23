@@ -13,6 +13,8 @@ export class VectorIndex {
   private data: Float32Array;
   private ids: string[] = [];
   private count = 0;
+  /** id → row, for O(1) lookup by id (kept in sync through add/remove). */
+  private rowById = new Map<string, number>();
 
   constructor(dims: number, capacity = 0) {
     this.dims = dims;
@@ -21,6 +23,14 @@ export class VectorIndex {
 
   get size(): number {
     return this.count;
+  }
+
+  /** The stored vector for an id (a copy), or undefined if absent. Used by
+   *  chunk-level diffing to reuse an unchanged chunk's vector. */
+  get(id: string): Float32Array | undefined {
+    const row = this.rowById.get(id);
+    if (row === undefined) return undefined;
+    return this.data.slice(row * this.dims, (row + 1) * this.dims);
   }
 
   /** Copies out the stored ids and row-major vectors (used to serialize the
@@ -39,6 +49,7 @@ export class VectorIndex {
     this.ensureCapacity(this.count + 1);
     this.data.set(vector, this.count * this.dims);
     this.ids.push(id);
+    this.rowById.set(id, this.count);
     this.count++;
   }
 
@@ -49,11 +60,16 @@ export class VectorIndex {
     const { dims } = this;
     let write = 0;
     for (let read = 0; read < this.count; read++) {
-      if (ids.has(this.ids[read]!)) continue;
+      const id = this.ids[read]!;
+      if (ids.has(id)) {
+        this.rowById.delete(id);
+        continue;
+      }
       if (write !== read) {
         this.data.copyWithin(write * dims, read * dims, (read + 1) * dims);
-        this.ids[write] = this.ids[read]!;
+        this.ids[write] = id;
       }
+      this.rowById.set(id, write); // row may have shifted down
       write++;
     }
     this.ids.length = write;
@@ -68,7 +84,10 @@ export class VectorIndex {
     }
     this.ensureCapacity(this.count + ids.length);
     this.data.set(vectors, this.count * this.dims);
-    for (const id of ids) this.ids.push(id);
+    for (let i = 0; i < ids.length; i++) {
+      this.ids.push(ids[i]!);
+      this.rowById.set(ids[i]!, this.count + i);
+    }
     this.count += ids.length;
   }
 

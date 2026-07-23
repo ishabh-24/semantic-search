@@ -3,7 +3,7 @@ import type { ChunkRecord } from "../shared/worker-protocol";
 import { chunkDoc } from "../indexing/chunker";
 import { AuthRequiredError, getApiToken } from "./auth";
 import { DOC_MIME_TYPE, exportDocMarkdown, getStartPageToken, listChanges } from "./drive";
-import { indexChunks, removeDocs, saveIndex } from "./retrieval-client";
+import { removeDocs, saveIndex, updateDoc } from "./retrieval-client";
 
 // Incremental sync via the Drive changes feed. Instead of re-indexing the
 // whole corpus, we keep a page-token cursor and, each sync, apply only what
@@ -67,10 +67,9 @@ export async function syncNow(): Promise<SyncOutcome> {
     }
   }
 
-  // Remove old chunks for deletions AND for docs about to be re-added (replace
-  // semantics — idempotent add would otherwise skip a modified doc's ids).
-  const toRemove = [...removeDocIds, ...reindex.keys()];
-  if (toRemove.length > 0) await removeDocs(toRemove);
+  // Tombstone deletions. Modified/added docs go through updateDoc, which
+  // replaces their chunks and re-embeds only the ones whose text changed.
+  if (removeDocIds.size > 0) await removeDocs([...removeDocIds]);
 
   let changed = 0;
   for (const meta of reindex.values()) {
@@ -84,7 +83,9 @@ export async function syncNow(): Promise<SyncOutcome> {
         text: c.text,
         modifiedTime: meta.modifiedTime,
       }));
-      if (chunks.length > 0) await indexChunks(chunks);
+      // Empty doc (e.g. all content removed) → just drop its old chunks.
+      if (chunks.length > 0) await updateDoc(chunks);
+      else await removeDocs([meta.id]);
       changed++;
     } catch (error) {
       if (error instanceof AuthRequiredError) throw error;
@@ -93,7 +94,7 @@ export async function syncNow(): Promise<SyncOutcome> {
   }
 
   await saveCursor(newToken);
-  if (toRemove.length > 0 || changed > 0) {
+  if (removeDocIds.size > 0 || changed > 0) {
     try {
       await saveIndex(token); // persist the freshened index
     } catch (error) {

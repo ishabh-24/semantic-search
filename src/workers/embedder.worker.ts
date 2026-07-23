@@ -9,6 +9,7 @@ import { VectorIndex } from "../retrieval/vector-index";
 import { LexicalIndex, type LexicalDoc } from "../retrieval/lexical-index";
 import { reciprocalRankFusion } from "../retrieval/fusion";
 import { planBatches, DEFAULT_BATCH_OPTIONS } from "../indexing/batching";
+import { diffChunks } from "../indexing/chunk-diff";
 import {
   serializeIndex,
   deserializeIndex,
@@ -154,7 +155,7 @@ function docCount(): number {
 /** Removes every chunk belonging to the given documents from all three
  *  structures. Used for deletions and to replace a modified doc's old chunks
  *  before its new ones are added. */
-function removeDocs(docIds: string[]): number {
+async function removeDocs(docIds: string[]): Promise<number> {
   const targets = new Set(docIds);
   const chunkIds: string[] = [];
   for (const [id, record] of metadata) {
@@ -162,9 +163,71 @@ function removeDocs(docIds: string[]): number {
   }
   if (chunkIds.length === 0) return vectorIndex.size;
   vectorIndex.remove(new Set(chunkIds));
-  lexicalIndex.remove(chunkIds);
+  await lexicalIndex.remove(chunkIds);
   for (const id of chunkIds) metadata.delete(id);
   return vectorIndex.size;
+}
+
+/** Re-indexes a modified (or new) document, re-embedding only the chunks whose
+ *  text changed and reusing existing vectors for unchanged chunks. */
+async function updateChunks(chunks: ChunkRecord[]): Promise<{
+  indexSize: number;
+  embedded: number;
+  reused: number;
+}> {
+  const byDoc = new Map<string, ChunkRecord[]>();
+  for (const c of chunks) {
+    const group = byDoc.get(c.docId);
+    if (group) group.push(c);
+    else byDoc.set(c.docId, [c]);
+  }
+
+  let embedded = 0;
+  let reused = 0;
+  for (const [docId, newChunks] of byDoc) {
+    // This doc's current chunk vectors, keyed by their text.
+    const existingByText = new Map<string, Float32Array>();
+    for (const [id, record] of metadata) {
+      if (record.docId !== docId) continue;
+      const vector = vectorIndex.get(id);
+      if (vector) existingByText.set(record.text, vector);
+    }
+
+    const plan = diffChunks(
+      newChunks.map((c) => c.text),
+      existingByText,
+    );
+
+    // Embed only the chunks with no reusable vector (length-sorted batches).
+    const embedPositions = plan.reuse.flatMap((v, i) => (v ? [] : [i]));
+    const embedTexts = embedPositions.map((i) => newChunks[i]!.text);
+    const fresh = new Float32Array(embedTexts.length * EXPECTED_DIMS);
+    for (const batch of planBatches(embedTexts, DEFAULT_BATCH_OPTIONS)) {
+      const { vectors } = await embed(batch.map((i) => embedTexts[i]!));
+      batch.forEach((origIdx, j) => {
+        fresh.set(vectors.subarray(j * EXPECTED_DIMS, (j + 1) * EXPECTED_DIMS), origIdx * EXPECTED_DIMS);
+      });
+    }
+
+    // Replace the doc's chunks: reused vectors kept, fresh ones embedded above.
+    await removeDocs([docId]);
+    let freshRow = 0;
+    for (let i = 0; i < newChunks.length; i++) {
+      let vector = plan.reuse[i];
+      if (!vector) {
+        vector = fresh.subarray(freshRow * EXPECTED_DIMS, (freshRow + 1) * EXPECTED_DIMS);
+        freshRow++;
+      }
+      vectorIndex.add(newChunks[i]!.id, vector);
+    }
+    lexicalIndex.add(newChunks.map(lexicalDoc));
+    for (const c of newChunks) metadata.set(c.id, c);
+
+    embedded += embedTexts.length;
+    reused += plan.reuseCount;
+    console.log(`[worker] doc ${docId}: embedded ${embedTexts.length}, reused ${plan.reuseCount} chunks`);
+  }
+  return { indexSize: vectorIndex.size, embedded, reused };
 }
 
 /** Embeds a set of chunks (length-sorted batching to cut padding waste) and
@@ -363,8 +426,13 @@ self.addEventListener("message", async (event) => {
         break;
       }
       case "index.remove": {
-        const indexSize = removeDocs(request.docIds);
+        const indexSize = await removeDocs(request.docIds);
         reply({ id: request.id, ok: true, type: "index.remove", indexSize });
+        break;
+      }
+      case "index.update": {
+        const { indexSize, embedded, reused } = await updateChunks(request.chunks);
+        reply({ id: request.id, ok: true, type: "index.update", indexSize, embedded, reused });
         break;
       }
       case "search": {

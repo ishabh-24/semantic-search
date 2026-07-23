@@ -51,6 +51,17 @@ export async function removeDocs(docIds: string[]): Promise<number> {
   return response.indexSize;
 }
 
+/** Re-indexes a modified/added doc, re-embedding only its changed chunks.
+ *  Returns how many chunks were embedded vs reused. */
+export async function updateDoc(
+  chunks: ChunkRecord[],
+): Promise<{ indexSize: number; embedded: number; reused: number }> {
+  const response = await callWorker({ type: "index.update", chunks });
+  if (!response.ok) throw new Error(`index.update failed: ${response.error}`);
+  if (response.type !== "index.update") throw new Error(`unexpected response ${response.type}`);
+  return { indexSize: response.indexSize, embedded: response.embedded, reused: response.reused };
+}
+
 /** Serializes and uploads the index to Drive appDataFolder. */
 export async function saveIndex(token: string): Promise<{ fileId: string; sizeBytes: number }> {
   const response = await callWorker({ type: "index.save", token });

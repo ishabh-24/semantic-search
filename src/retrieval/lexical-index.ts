@@ -43,11 +43,14 @@ export class LexicalIndex {
     return this.engine.documentCount;
   }
 
-  /** Removes documents by id (no-op for ids not present). */
-  remove(ids: string[]): void {
-    for (const id of ids) {
-      if (this.engine.has(id)) this.engine.discard(id);
-    }
+  /** Removes documents by id (no-op for ids not present). Vacuums so the ids
+   *  are fully released — otherwise re-adding the same id (a modified doc
+   *  keeps its `docId:seq` ids) would throw a duplicate-id error. */
+  async remove(ids: string[]): Promise<void> {
+    const present = ids.filter((id) => this.engine.has(id));
+    if (present.length === 0) return;
+    this.engine.discardAll(present);
+    await this.engine.vacuum();
   }
 
   search(query: string, k: number): SearchHit[] {
