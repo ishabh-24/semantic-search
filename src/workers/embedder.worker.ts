@@ -151,6 +151,22 @@ function docCount(): number {
   return docs.size;
 }
 
+/** Removes every chunk belonging to the given documents from all three
+ *  structures. Used for deletions and to replace a modified doc's old chunks
+ *  before its new ones are added. */
+function removeDocs(docIds: string[]): number {
+  const targets = new Set(docIds);
+  const chunkIds: string[] = [];
+  for (const [id, record] of metadata) {
+    if (targets.has(record.docId)) chunkIds.push(id);
+  }
+  if (chunkIds.length === 0) return vectorIndex.size;
+  vectorIndex.remove(new Set(chunkIds));
+  lexicalIndex.remove(chunkIds);
+  for (const id of chunkIds) metadata.delete(id);
+  return vectorIndex.size;
+}
+
 /** Embeds a set of chunks (length-sorted batching to cut padding waste) and
  *  adds them to the vector index, lexical index, and metadata map.
  *  Idempotent: chunk ids already present are skipped, so a resumed job that
@@ -344,6 +360,11 @@ self.addEventListener("message", async (event) => {
       case "index.add": {
         const indexSize = await addChunks(request.chunks);
         reply({ id: request.id, ok: true, type: "index.add", indexSize });
+        break;
+      }
+      case "index.remove": {
+        const indexSize = removeDocs(request.docIds);
+        reply({ id: request.id, ok: true, type: "index.remove", indexSize });
         break;
       }
       case "search": {

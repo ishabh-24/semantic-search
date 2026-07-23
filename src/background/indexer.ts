@@ -4,6 +4,7 @@ import { chunkDoc } from "../indexing/chunker";
 import { AuthRequiredError, getApiToken } from "./auth";
 import { listAllDocs, exportDocMarkdown } from "./drive";
 import { indexChunks, indexStats, saveIndex, loadIndex } from "./retrieval-client";
+import { initSyncCursor } from "./sync";
 
 // Background first-run indexing job. The unit of progress and resumability
 // is one document: export → chunk → embed+index → mark done → persist the
@@ -239,6 +240,7 @@ async function runLoop(): Promise<void> {
         job.status = "done";
         await saveJob(job);
         await persistToDrive(); // durable + syncs across the user's devices
+        await initSyncCursor(); // track edits made after this point
         break;
       }
 

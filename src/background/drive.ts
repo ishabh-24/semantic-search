@@ -5,8 +5,9 @@ import type { DocMeta } from "../shared/messages";
 // (My Drive + docs individually shared with the user) — no shared-drive
 // flags.
 
-const FILES_URL = "https://www.googleapis.com/drive/v3/files";
-const DOC_MIME_TYPE = "application/vnd.google-apps.document";
+const DRIVE_URL = "https://www.googleapis.com/drive/v3";
+const FILES_URL = `${DRIVE_URL}/files`;
+export const DOC_MIME_TYPE = "application/vnd.google-apps.document";
 // Markdown keeps heading structure for the chunker (commit 5) with
 // near-zero parsing; Drive exports Docs as text/markdown natively.
 const EXPORT_MIME = "text/markdown";
@@ -119,6 +120,56 @@ export async function exportDocMarkdown(docId: string): Promise<string> {
   const params = new URLSearchParams({ mimeType: EXPORT_MIME });
   const res = await fetchWithBackoff(`${FILES_URL}/${encodeURIComponent(docId)}/export?${params}`);
   return res.text();
+}
+
+// ---- Incremental change tracking (changes.list) --------------------------
+
+export type DriveChange = {
+  fileId: string;
+  removed?: boolean;
+  file?: {
+    id: string;
+    name: string;
+    mimeType: string;
+    modifiedTime: string;
+    trashed: boolean;
+  };
+};
+
+/** A cursor marking "now" in the change feed; store it, then list changes
+ *  relative to it later. */
+export async function getStartPageToken(): Promise<string> {
+  const res = await fetchWithBackoff(`${DRIVE_URL}/changes/startPageToken`);
+  return ((await res.json()) as { startPageToken: string }).startPageToken;
+}
+
+/** All changes since `pageToken`, paginated internally, plus the new cursor
+ *  to store for next time. */
+export async function listChanges(
+  pageToken: string,
+): Promise<{ changes: DriveChange[]; newToken: string }> {
+  const changes: DriveChange[] = [];
+  let token = pageToken;
+  for (;;) {
+    const params = new URLSearchParams({
+      pageToken: token,
+      pageSize: "1000",
+      fields:
+        "nextPageToken,newStartPageToken,changes(fileId,removed,file(id,name,mimeType,modifiedTime,trashed))",
+    });
+    const res = await fetchWithBackoff(`${DRIVE_URL}/changes?${params}`);
+    const page = (await res.json()) as {
+      changes?: DriveChange[];
+      nextPageToken?: string;
+      newStartPageToken?: string;
+    };
+    changes.push(...(page.changes ?? []));
+    if (page.nextPageToken) {
+      token = page.nextPageToken;
+      continue;
+    }
+    return { changes, newToken: page.newStartPageToken ?? token };
+  }
 }
 
 export type ExportedDoc = { doc: DocMeta; markdown: string };

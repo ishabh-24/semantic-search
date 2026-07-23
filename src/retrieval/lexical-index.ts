@@ -43,6 +43,13 @@ export class LexicalIndex {
     return this.engine.documentCount;
   }
 
+  /** Removes documents by id (no-op for ids not present). */
+  remove(ids: string[]): void {
+    for (const id of ids) {
+      if (this.engine.has(id)) this.engine.discard(id);
+    }
+  }
+
   search(query: string, k: number): SearchHit[] {
     if (!query.trim()) return [];
     return this.engine

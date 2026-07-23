@@ -66,6 +66,30 @@ describe("VectorIndex", () => {
     expect(top.score).toBeCloseTo(1, 5);
   });
 
+  it("removes ids by compaction, keeping the rest searchable", () => {
+    const idx = new VectorIndex(2);
+    idx.add("east", unit(1, 0));
+    idx.add("north", unit(0, 1));
+    idx.add("west", unit(-1, 0));
+    expect(idx.remove(new Set(["north"]))).toBe(2);
+    expect(idx.size).toBe(2);
+    const hits = idx.search(unit(1, 0), 5).map((h) => h.id);
+    expect(hits).toEqual(["east", "west"]);
+    // The removed vector's row must not leak into results.
+    expect(idx.search(unit(0, 1), 5).map((h) => h.id)).not.toContain("north");
+  });
+
+  it("remove then add re-densifies without corrupting vectors", () => {
+    const idx = new VectorIndex(2);
+    idx.add("a", unit(1, 0));
+    idx.add("b", unit(0, 1));
+    idx.remove(new Set(["a"]));
+    idx.add("c", unit(1, 1));
+    expect(idx.size).toBe(2);
+    expect(idx.search(unit(0, 1), 1)[0]!.id).toBe("b");
+    expect(idx.search(unit(1, 0), 2).map((h) => h.id).sort()).toEqual(["b", "c"]);
+  });
+
   it("rejects dimension mismatches", () => {
     const idx = new VectorIndex(3);
     expect(() => idx.add("bad", unit(1, 0))).toThrow();

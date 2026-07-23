@@ -60,6 +60,7 @@ export type Request =
   | { type: "index.pause" }
   | { type: "index.resume" }
   | { type: "index.status" }
+  | { type: "sync.now" }
   | { type: "search"; query: string };
 
 /** Service worker → offscreen document. Runtime messages are broadcast to
@@ -84,6 +85,7 @@ export type OffscreenResponse =
       inferMs: number;
     }
   | { id: number; ok: true; type: "index.add"; indexSize: number }
+  | { id: number; ok: true; type: "index.remove"; indexSize: number }
   | { id: number; ok: true; type: "search"; hits: DocHit[]; indexSize: number }
   | {
       id: number;
@@ -148,7 +150,16 @@ export type Response =
   | { type: "embed.benchResult"; ok: false; error: string }
   | { type: "index.progress"; progress: IndexProgress }
   | { type: "search.results"; ok: true; hits: DocHit[]; indexSize: number }
-  | { type: "search.results"; ok: false; error: string };
+  | { type: "search.results"; ok: false; error: string }
+  | {
+      type: "sync.result";
+      ok: true;
+      /** True on the very first sync, which only establishes the baseline. */
+      baseline: boolean;
+      changed: number;
+      removed: number;
+    }
+  | { type: "sync.result"; ok: false; error: string };
 
 export function sendRequest(request: Request): Promise<Response> {
   return chrome.runtime.sendMessage({ ...request, target: "background" });

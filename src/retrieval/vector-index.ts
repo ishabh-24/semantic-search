@@ -42,6 +42,25 @@ export class VectorIndex {
     this.count++;
   }
 
+  /** Removes the given ids by compacting the flat array in place (kept rows
+   *  shift down over removed ones). Returns the new size. O(size). */
+  remove(ids: ReadonlySet<string>): number {
+    if (ids.size === 0) return this.count;
+    const { dims } = this;
+    let write = 0;
+    for (let read = 0; read < this.count; read++) {
+      if (ids.has(this.ids[read]!)) continue;
+      if (write !== read) {
+        this.data.copyWithin(write * dims, read * dims, (read + 1) * dims);
+        this.ids[write] = this.ids[read]!;
+      }
+      write++;
+    }
+    this.ids.length = write;
+    this.count = write;
+    return this.count;
+  }
+
   /** Bulk append; `vectors` is row-major [ids.length × dims]. */
   addBatch(ids: string[], vectors: Float32Array): void {
     if (vectors.length !== ids.length * this.dims) {

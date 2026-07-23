@@ -31,6 +31,9 @@ export type WorkerRequest =
   | { id: number; type: "index.add"; chunks: ChunkRecord[] }
   | { id: number; type: "search"; query: string; k: number }
   | { id: number; type: "index.stats" }
+  // Remove all chunks belonging to the given documents (deletions, or the old
+  // version of a doc about to be re-added by incremental sync).
+  | { id: number; type: "index.remove"; docIds: string[] }
   // SW injects a fresh OAuth token; the worker does the Drive I/O itself so
   // the ~24MB blob never crosses a message boundary.
   | { id: number; type: "index.save"; token: string }
@@ -51,6 +54,7 @@ export type WorkerResponse =
       inferMs: number;
     }
   | { id: number; ok: true; type: "index.add"; indexSize: number }
+  | { id: number; ok: true; type: "index.remove"; indexSize: number }
   | { id: number; ok: true; type: "search"; hits: DocHit[]; indexSize: number }
   | {
       id: number;

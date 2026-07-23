@@ -43,6 +43,14 @@ export async function indexStats(): Promise<{
   };
 }
 
+/** Removes all chunks belonging to the given documents from the index. */
+export async function removeDocs(docIds: string[]): Promise<number> {
+  const response = await callWorker({ type: "index.remove", docIds });
+  if (!response.ok) throw new Error(`index.remove failed: ${response.error}`);
+  if (response.type !== "index.remove") throw new Error(`unexpected response ${response.type}`);
+  return response.indexSize;
+}
+
 /** Serializes and uploads the index to Drive appDataFolder. */
 export async function saveIndex(token: string): Promise<{ fileId: string; sizeBytes: number }> {
   const response = await callWorker({ type: "index.save", token });

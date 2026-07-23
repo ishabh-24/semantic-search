@@ -5,8 +5,10 @@ const status = document.getElementById("status")!;
 const connectButton = document.getElementById("connect") as HTMLButtonElement;
 const indexPanel = document.getElementById("index-panel")!;
 const indexAction = document.getElementById("index-action") as HTMLButtonElement;
+const syncNowButton = document.getElementById("sync-now") as HTMLButtonElement;
 const indexBar = document.getElementById("index-bar") as HTMLProgressElement;
 const indexProgress = document.getElementById("index-progress")!;
+const syncResult = document.getElementById("sync-result")!;
 const query = document.getElementById("query") as HTMLInputElement;
 const resultsEl = document.getElementById("results")!;
 const devResult = document.getElementById("dev-result")!;
@@ -237,6 +239,30 @@ indexAction.addEventListener("click", async () => {
   indexAction.disabled = true;
   const response = await sendRequest(request);
   if (response.type === "index.progress") renderIndex(response.progress);
+});
+
+syncNowButton.addEventListener("click", async () => {
+  syncNowButton.disabled = true;
+  syncResult.hidden = false;
+  syncResult.textContent = "Checking Drive for changes…";
+  try {
+    const response = await sendRequest({ type: "sync.now" });
+    if (response.type !== "sync.result") return;
+    if (!response.ok) {
+      syncResult.textContent = response.error;
+      return;
+    }
+    syncResult.textContent = response.baseline
+      ? "Now tracking changes from here on."
+      : response.changed === 0 && response.removed === 0
+        ? "Already up to date."
+        : `Synced: ${response.changed} updated, ${response.removed} removed.`;
+    // Reflect the freshened index in the panel and any active query.
+    void refreshIndex();
+    if (query.value.trim()) void runSearch(query.value);
+  } finally {
+    syncNowButton.disabled = false;
+  }
 });
 
 // ---- Dev tools ------------------------------------------------------------

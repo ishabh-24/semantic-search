@@ -11,6 +11,7 @@ import {
   resumeIndex,
   startIndex,
 } from "./indexer";
+import { syncNow, syncOnStartup } from "./sync";
 
 const SEARCH_K = 10;
 
@@ -34,8 +35,11 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 });
 
 // On startup: restore a saved index from Drive (so search works with zero
-// re-embedding), then resume any first-run job the worker death interrupted.
-void loadIndexOnStartup().then(() => maybeResumeOnStartup());
+// re-embedding), resume any interrupted first-run job, then pull incremental
+// changes since the last sync.
+void loadIndexOnStartup()
+  .then(() => maybeResumeOnStartup())
+  .then(() => syncOnStartup());
 
 async function handle(request: Request): Promise<Response> {
   switch (request.type) {
@@ -66,8 +70,22 @@ async function handle(request: Request): Promise<Response> {
       return indexControl(resumeIndex);
     case "index.status":
       return indexControl(getIndexProgress);
+    case "sync.now":
+      return runSync();
     case "search":
       return runSearch(request.query);
+  }
+}
+
+async function runSync(): Promise<Response> {
+  try {
+    const result = await syncNow();
+    return { type: "sync.result", ok: true, ...result };
+  } catch (error) {
+    const message =
+      error instanceof AuthRequiredError ? "Not connected to Google Drive." : String(error);
+    console.error("[sync] failed", error);
+    return { type: "sync.result", ok: false, error: message };
   }
 }
 
