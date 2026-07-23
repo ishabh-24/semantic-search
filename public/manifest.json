@@ -24,5 +24,6 @@
   "action": {
     "default_title": "Drive Semantic Search",
     "default_popup": "popup.html"
-  }
+  },
+  "omnibox": { "keyword": "drv" }
 }

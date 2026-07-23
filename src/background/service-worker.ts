@@ -12,6 +12,7 @@ import {
   startIndex,
 } from "./indexer";
 import { syncNow, syncOnStartup } from "./sync";
+import { registerOmnibox } from "./omnibox";
 
 const SEARCH_K = 10;
 
@@ -20,6 +21,10 @@ const SEARCH_K = 10;
 // identifies the current worker instance in logs.
 const startedAt = Date.now();
 console.log(`[sw] started at ${new Date(startedAt).toISOString()}`);
+
+// Address-bar keyword search. Registered synchronously at SW load (MV3
+// requires event listeners at top level so the event can wake the worker).
+registerOmnibox();
 
 const HEARTBEAT_ALARM = "heartbeat";
 
