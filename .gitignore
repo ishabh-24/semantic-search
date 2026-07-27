@@ -2,6 +2,8 @@ node_modules/
 key.pem
 .claude/settings.local.json
 eval/.build/
+.aws-sam/
+samconfig.toml
 dist/
 *.log
 .DS_Store

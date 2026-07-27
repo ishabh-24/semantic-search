@@ -1,0 +1,9 @@
+{
+  "name": "drive-semantic-search-embed-fn",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Lambda /embed handler for the opt-in cloud embedding tier",
+  "dependencies": {
+    "esbuild": "^0.25.5"
+  }
+}

@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Stateless /embed endpoint for Drive Semantic Search's opt-in cloud tier.
+  API Gateway -> Lambda -> Amazon Bedrock (Titan Text Embeddings V2).
+  The Lambda persists nothing (text in, vectors out) and its execution role
+  can do exactly two things: invoke the one Bedrock model, and write its own
+  CloudWatch logs.
+
+Parameters:
+  BedrockModelId:
+    Type: String
+    Default: amazon.titan-embed-text-v2:0
+    Description: Bedrock embedding model the endpoint may invoke.
+  StageName:
+    Type: String
+    Default: prod
+
+Globals:
+  Function:
+    Runtime: nodejs20.x
+    Architectures: [arm64]
+    MemorySize: 256
+    Timeout: 15
+
+Resources:
+  EmbedApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: !Ref StageName
+      # Usage plan, API key, and throttles are added in commit 27.
+
+  EmbedFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: [app.ts]
+        Target: es2022
+        Minify: true
+    Properties:
+      CodeUri: src/embed/
+      Handler: app.handler
+      Environment:
+        Variables:
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+      # Least privilege: SAM attaches AWSLambdaBasicExecutionRole (CloudWatch
+      # logs only); this adds invoke on exactly one model ARN. Nothing else.
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Sid: InvokeEmbeddingModelOnly
+              Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: !Sub "arn:aws:bedrock:${AWS::Region}::foundation-model/${BedrockModelId}"
+      Events:
+        Embed:
+          Type: Api
+          Properties:
+            RestApiId: !Ref EmbedApi
+            Path: /embed
+            Method: post
+
+Outputs:
+  EmbedEndpoint:
+    Description: "POST { texts: string[] } here to get embeddings."
+    Value: !Sub "https://${EmbedApi}.execute-api.${AWS::Region}.amazonaws.com/${StageName}/embed"
