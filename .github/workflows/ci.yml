@@ -1,0 +1,35 @@
+# Test gate: typecheck (app + worker configs), unit tests, and a full
+# extension build whose dist/ is uploaded as an artifact. Runs on PRs and
+# pushes to the default branch, and is reused as the gate in deploy.yml.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [Main, main]
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Typecheck (app)
+        run: npx tsc --noEmit -p tsconfig.json
+      - name: Typecheck (worker)
+        run: npx tsc --noEmit -p tsconfig.worker.json
+      - name: Unit tests
+        run: npm test
+      - name: Build extension
+        run: node build.mjs
+      - name: Upload extension artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: extension-dist
+          path: dist/
+          if-no-files-found: error

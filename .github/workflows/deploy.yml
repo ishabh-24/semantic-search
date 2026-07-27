@@ -1,0 +1,45 @@
+# Tagged release → deploy the AWS embed stack, gated on the full CI suite.
+# Auth is GitHub OIDC → the semantic-search-github-deploy IAM role (trust
+# policy restricted to this repo) — no long-lived AWS keys live in GitHub.
+# AlarmEmail is deliberately not passed: an existing stack keeps its current
+# value (CloudFormation uses previous parameter values when none are given).
+name: Deploy
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write # mint the OIDC token for AWS
+  contents: read
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    environment: aws
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/setup-sam@v2
+        with:
+          use-installer: true
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: SAM build
+        working-directory: aws
+        run: sam build
+      - name: SAM deploy
+        working-directory: aws
+        run: >
+          sam deploy
+          --stack-name drive-search-embed
+          --resolve-s3
+          --capabilities CAPABILITY_IAM
+          --no-confirm-changeset
+          --no-fail-on-empty-changeset
+          --no-progressbar
