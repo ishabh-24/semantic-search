@@ -4,6 +4,7 @@
   "private": true,
   "description": "Lambda /embed handler for the opt-in cloud embedding tier",
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1096.0",
     "esbuild": "^0.25.5"
   }
 }

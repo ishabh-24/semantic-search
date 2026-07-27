@@ -17,7 +17,10 @@ embeddings for users who choose it.
 
 - **API Gateway** (REST) — `POST /embed`. Usage plan / API key / throttling
   are added in commit 27.
-- **Lambda** — the `/embed` handler (stub here; Bedrock wired in commit 26).
+- **Lambda** — the `/embed` handler: validates `{ texts: string[] }` (max 64
+  texts, 8k chars each), invokes Titan V2 per text (1024 dims, normalized,
+  concurrency-capped), returns `{ vectors, dims, model }`. Logs carry only
+  counts, durations, and error class names — never request text.
 - **IAM role** — least privilege: `bedrock:InvokeModel` on exactly one model
   ARN, plus the default CloudWatch-logs permissions. Nothing else — no S3, no
   DynamoDB, no network egress config, because the handler stores nothing.
@@ -50,9 +53,11 @@ curl -sS -X POST "$EMBED_ENDPOINT" \
   -d '{"texts":["hello world"]}'
 ```
 
-At commit 25 the handler is a stub, so this returns `501 not implemented`
-(proving the API → Lambda path is stood up). Commit 26 makes it return real
-vectors.
+Returns `{ vectors: [[...1024 floats]], dims: 1024, model: "amazon.titan-embed-text-v2:0" }`.
+Vectors are unit-normalized (the index does dot-product cosine on unit
+vectors). To confirm nothing is persisted and no request text is logged, send
+a sentinel string and filter the function's CloudWatch log group for it — zero
+hits; only `{"event":"embed_ok","texts":N,"ms":...}` lines appear.
 
 ## Least-privilege review (the commit-25 "done when")
 
