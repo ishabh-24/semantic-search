@@ -183,6 +183,16 @@ function hardSplit(text: string, size: number): string[] {
   const pieces: string[] = [];
   let current = "";
   for (const word of words) {
+    // A single "word" over the cap — a base64 blob, long URL, minified code —
+    // gets chopped at character boundaries; no piece may survive oversized.
+    if (word.length > size) {
+      if (current) {
+        pieces.push(current);
+        current = "";
+      }
+      for (let i = 0; i < word.length; i += size) pieces.push(word.slice(i, i + size));
+      continue;
+    }
     if (current && current.length + word.length + 1 > size) {
       pieces.push(current);
       current = "";

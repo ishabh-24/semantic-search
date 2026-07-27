@@ -136,3 +136,21 @@ describe("shape", () => {
     expect(chunks[0]!.text).toBe("Windows paragraph.");
   });
 });
+
+describe("oversized unbreakable content", () => {
+  it("chops a single giant 'word' so no chunk exceeds an embeddable size", () => {
+    // A base64-ish blob with no whitespace — word-boundary splitting alone
+    // would pass it through as one unbounded chunk (the cloud endpoint
+    // rejects >8000 chars; the local model silently truncates).
+    const blob = "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo".repeat(600); // ~21k chars
+    const md = `# Data\n\nIntro sentence.\n\n${blob}`;
+    const chunks = chunkDoc(DOC, md);
+    expect(chunks.length).toBeGreaterThan(1);
+    const cap = DEFAULT_CHUNK_OPTIONS.targetChars + DEFAULT_CHUNK_OPTIONS.overlapChars + 2;
+    for (const c of chunks) expect(c.text.length).toBeLessThanOrEqual(cap);
+    // Nothing lost: the pieces reassemble the original blob.
+    expect(chunks.map((c) => c.text).join("").replaceAll(/[\s]|Intro sentence\./g, "")).toContain(
+      blob.slice(0, 100),
+    );
+  });
+});
