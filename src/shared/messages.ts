@@ -4,6 +4,7 @@
 // each side type-checks against the same contract.
 
 import type { WorkerRequest, DocHit } from "./worker-protocol";
+import type { TierSettings } from "./embedding-tier";
 
 export type AuthStatus =
   | { state: "connected"; email: string | null }
@@ -61,7 +62,9 @@ export type Request =
   | { type: "index.resume" }
   | { type: "index.status" }
   | { type: "sync.now" }
-  | { type: "search"; query: string };
+  | { type: "search"; query: string }
+  | { type: "tier.get" }
+  | { type: "tier.set"; settings: TierSettings };
 
 /** Service worker → offscreen document. Runtime messages are broadcast to
  *  every extension context, so each is wrapped with an explicit target and
@@ -84,6 +87,7 @@ export type OffscreenResponse =
       modelLoadMs: number;
       inferMs: number;
     }
+  | { id: number; ok: true; type: "tier.set"; cleared: boolean; indexSize: number }
   | { id: number; ok: true; type: "index.add"; indexSize: number }
   | { id: number; ok: true; type: "index.remove"; indexSize: number }
   | { id: number; ok: true; type: "index.update"; indexSize: number; embedded: number; reused: number }
@@ -160,7 +164,15 @@ export type Response =
       changed: number;
       removed: number;
     }
-  | { type: "sync.result"; ok: false; error: string };
+  | { type: "sync.result"; ok: false; error: string }
+  | {
+      type: "tier.settings";
+      settings: TierSettings;
+      /** True when this change crossed embedding spaces and a full re-index
+       *  was kicked off. */
+      reindexing: boolean;
+      error?: string;
+    };
 
 export function sendRequest(request: Request): Promise<Response> {
   return chrome.runtime.sendMessage({ ...request, target: "background" });

@@ -102,6 +102,22 @@
     <div id="results"></div>
 
     <details>
+      <summary>Embedding settings</summary>
+      <label><input type="radio" name="tier" value="local" checked /> On-device (private, default)</label>
+      <label><input type="radio" name="tier" value="cloud" /> Cloud (higher quality, opt-in)</label>
+      <div id="cloud-fields" hidden>
+        <input id="cloud-endpoint" type="url" placeholder="https://…/prod/embed" />
+        <input id="cloud-key" type="password" placeholder="API key" />
+        <p class="hint">
+          Your own endpoint from the aws/ stack — text is embedded statelessly
+          and never stored. Switching tiers re-indexes everything.
+        </p>
+      </div>
+      <button id="tier-apply">Apply</button>
+      <p id="tier-status" class="hint" hidden></p>
+    </details>
+
+    <details>
       <summary>Dev tools</summary>
       <button id="list-docs" hidden>List Docs</button>
       <button id="export-all" hidden>Export All</button>

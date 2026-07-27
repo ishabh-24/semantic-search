@@ -16,9 +16,13 @@ const MODEL_ID = process.env.BEDROCK_MODEL_ID ?? "amazon.titan-embed-text-v2:0";
 const DIMS = 1024;
 const MAX_TEXTS = 64;
 const MAX_TEXT_CHARS = 8000;
-const CONCURRENCY = 8;
+// Bedrock quotas on fresh accounts are tight (60 req/min for Titan V2, one
+// text per InvokeModel). Low concurrency plus the SDK's adaptive retry mode
+// (client-side token bucket that learns the sustainable rate from throttle
+// responses) turns a stampede-then-fail into a paced trickle that succeeds.
+const CONCURRENCY = 2;
 
-const client = new BedrockRuntimeClient({});
+const client = new BedrockRuntimeClient({ retryMode: "adaptive", maxAttempts: 10 });
 
 type ApiEvent = { body: string | null; isBase64Encoded?: boolean };
 type ApiResult = { statusCode: number; headers?: Record<string, string>; body: string };

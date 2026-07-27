@@ -1,5 +1,6 @@
 import type { OffscreenRequest, OffscreenResponse } from "../shared/messages";
 import type { WorkerRequest } from "../shared/worker-protocol";
+import { getTierSettings } from "./tier-settings";
 
 // SW-side gateway to the offscreen-hosted retrieval worker. Strategy is
 // recovery, not prevention: before every call we ensure the offscreen
@@ -19,6 +20,9 @@ async function ensureOffscreenDocument(): Promise<void> {
   });
   if (contexts.length > 0) return;
 
+  // The doc (and its worker) is gone — the recreated worker boots with the
+  // local-tier default, so the stored config must be pushed again.
+  tierPushed = false;
   if (!creating) {
     creating = chrome.offscreen
       .createDocument({
@@ -38,6 +42,25 @@ async function ensureOffscreenDocument(): Promise<void> {
 
 let nextRequestId = 1;
 
+// A fresh worker starts in the local-tier default, so the stored tier config
+// must reach it before any embedding work. Pushed lazily before the first
+// real request of each SW instance, and re-pushed after the offscreen doc
+// (and with it the worker) is recreated. tier.set is idempotent worker-side:
+// re-pushing the same settings never clears the index.
+let tierPushed = false;
+
+async function ensureTierPushed(): Promise<void> {
+  if (tierPushed) return;
+  tierPushed = true; // set before the call: callWorker below must not recurse
+  try {
+    const response = await callWorker({ type: "tier.set", settings: await getTierSettings() });
+    if (!response.ok) throw new Error(`tier.set failed: ${response.error}`);
+  } catch (error) {
+    tierPushed = false;
+    throw error;
+  }
+}
+
 // Plain Omit over a union keeps only common keys (dropping texts/chunks/…);
 // distribute it across the union so each variant keeps its own fields.
 type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
@@ -48,6 +71,7 @@ export async function callWorker(
   request: DistributiveOmit<WorkerRequest, "id">,
 ): Promise<OffscreenResponse> {
   await ensureOffscreenDocument();
+  if (request.type !== "tier.set") await ensureTierPushed();
   const full = { ...request, id: nextRequestId++ } as WorkerRequest;
   const response = (await chrome.runtime.sendMessage({
     target: "offscreen",

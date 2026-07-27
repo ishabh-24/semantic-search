@@ -265,6 +265,68 @@ syncNowButton.addEventListener("click", async () => {
   }
 });
 
+// ---- Embedding tier -------------------------------------------------------
+
+const tierRadios = document.querySelectorAll<HTMLInputElement>('input[name="tier"]');
+const cloudFields = document.getElementById("cloud-fields")!;
+const cloudEndpoint = document.getElementById("cloud-endpoint") as HTMLInputElement;
+const cloudKey = document.getElementById("cloud-key") as HTMLInputElement;
+const tierApply = document.getElementById("tier-apply") as HTMLButtonElement;
+const tierStatus = document.getElementById("tier-status")!;
+
+function selectedTier(): "local" | "cloud" {
+  return [...tierRadios].find((r) => r.checked)?.value === "cloud" ? "cloud" : "local";
+}
+
+function renderTier(settings: { tier: "local" } | { tier: "cloud"; endpoint: string; apiKey: string }): void {
+  for (const radio of tierRadios) radio.checked = radio.value === settings.tier;
+  cloudFields.hidden = settings.tier !== "cloud";
+  if (settings.tier === "cloud") {
+    cloudEndpoint.value = settings.endpoint;
+    cloudKey.value = settings.apiKey;
+  }
+}
+
+for (const radio of tierRadios) {
+  radio.addEventListener("change", () => {
+    cloudFields.hidden = selectedTier() !== "cloud";
+  });
+}
+
+tierApply.addEventListener("click", async () => {
+  const settings =
+    selectedTier() === "cloud"
+      ? ({ tier: "cloud", endpoint: cloudEndpoint.value.trim(), apiKey: cloudKey.value.trim() } as const)
+      : ({ tier: "local" } as const);
+  if (settings.tier === "cloud" && (!settings.endpoint || !settings.apiKey)) {
+    tierStatus.hidden = false;
+    tierStatus.textContent = "Cloud tier needs both an endpoint URL and an API key.";
+    return;
+  }
+  tierApply.disabled = true;
+  tierStatus.hidden = false;
+  tierStatus.textContent = "Applying…";
+  try {
+    const response = await sendRequest({ type: "tier.set", settings });
+    if (response.type !== "tier.settings") return;
+    if (response.error) {
+      tierStatus.textContent = `Couldn't apply: ${response.error}`;
+      return;
+    }
+    tierStatus.textContent = response.reindexing
+      ? "Tier switched — the index was cleared and a full re-index just started."
+      : "Saved.";
+    if (response.reindexing) void refreshIndex();
+  } finally {
+    tierApply.disabled = false;
+  }
+});
+
+async function refreshTier(): Promise<void> {
+  const response = await sendRequest({ type: "tier.get" });
+  if (response.type === "tier.settings") renderTier(response.settings);
+}
+
 // ---- Dev tools ------------------------------------------------------------
 
 const listDocsButton = document.getElementById("list-docs") as HTMLButtonElement;
@@ -340,3 +402,4 @@ embedBenchButton.addEventListener("click", async () => {
 
 await refreshAuth({ type: "auth.getStatus" });
 void refreshIndex();
+void refreshTier();

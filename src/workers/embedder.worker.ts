@@ -18,18 +18,31 @@ import {
 } from "../persistence/index-format";
 import { mergeSnapshots } from "../persistence/merge";
 import { findIndexFile, uploadIndex, downloadIndex } from "../persistence/drive-appdata";
+import {
+  LOCAL_SPACE,
+  parseCloudResponse,
+  spaceFor,
+  type TierSettings,
+} from "../shared/embedding-tier";
 
-// Real embedder: all-MiniLM-L6-v2 via transformers.js on the ONNX WASM
+// Local embedder: all-MiniLM-L6-v2 via transformers.js on the ONNX WASM
 // backend. Model weights are DATA and may come from the network (pinned
 // revision, cached via the Cache API after first download); the WASM
 // runtime is CODE and ships inside the extension package per MV3's
 // remote-code ban (see build.mjs copy step + manifest CSP).
+//
+// Tier routing: embed() dispatches per request to the local pipeline or the
+// opt-in cloud /embed endpoint, per the tier config the SW pushes via
+// tier.set. The two produce vectors in different embedding spaces
+// (MiniLM-384 vs Titan-1024), so the active space also parameterizes the
+// index, the snapshot stamp, and the load/merge compat checks — a tier
+// switch across spaces wipes the index rather than ever mixing them.
 
-const MODEL_ID = "Xenova/all-MiniLM-L6-v2";
-// Pinned HF revision (2025-07-22). Bump deliberately, never track main:
-// an upstream re-upload must not silently change every vector we produce.
-const MODEL_REVISION = "751bff37182d3f1213fa05d7196b954e230abad9";
-const EXPECTED_DIMS = 384;
+// The SW pushes tier config before any embedding work (offscreen-client
+// re-pushes on worker restart), so the default only covers the gap until
+// that first push — and matches the SW-side default of fully-local.
+let tierSettings: TierSettings = { tier: "local" };
+let space = LOCAL_SPACE;
 
 // Per-backend precision. WASM runs q8 (small, fast on CPU); WebGPU runs
 // fp32 (full quality, broad GPU compatibility, still far faster than
@@ -39,7 +52,7 @@ const DTYPE: Record<Backend, "q8" | "fp32"> = { webgpu: "fp32", wasm: "q8" };
 
 const workerStartedAt = Date.now();
 let embedsServed = 0;
-let activeBackend: Backend = "wasm";
+let activeBackend: Backend | "cloud" = "wasm";
 
 env.allowLocalModels = false;
 env.useBrowserCache = true; // Cache API: cold load downloads once per profile
@@ -77,8 +90,8 @@ async function webgpuAvailable(): Promise<boolean> {
 
 function loadPipeline(backend: Backend): Promise<FeatureExtractionPipeline> {
   const t0 = Date.now();
-  return pipeline("feature-extraction", MODEL_ID, {
-    revision: MODEL_REVISION,
+  return pipeline("feature-extraction", LOCAL_SPACE.modelId, {
+    revision: LOCAL_SPACE.revision,
     device: backend,
     dtype: DTYPE[backend],
     progress_callback: (p: { status: string; file?: string; progress?: number }) => {
@@ -117,7 +130,15 @@ function getExtractor(): Promise<FeatureExtractionPipeline> {
   return extractorPromise;
 }
 
+/** Per-request tier router: every embedding in this worker flows through
+ *  here, so query vectors and index vectors always come from the same tier. */
 async function embed(
+  texts: string[],
+): Promise<{ vectors: Float32Array; dims: number; inferMs: number }> {
+  return tierSettings.tier === "cloud" ? cloudEmbed(texts, tierSettings) : localEmbed(texts);
+}
+
+async function localEmbed(
   texts: string[],
 ): Promise<{ vectors: Float32Array; dims: number; inferMs: number }> {
   const extractor = await getExtractor();
@@ -127,8 +148,8 @@ async function embed(
   const output = await extractor(texts, { pooling: "mean", normalize: true });
   const inferMs = Date.now() - t0;
   const dims = output.dims.at(-1) ?? 0;
-  if (dims !== EXPECTED_DIMS) {
-    throw new Error(`unexpected embedding dims ${dims} (expected ${EXPECTED_DIMS})`);
+  if (dims !== LOCAL_SPACE.dims) {
+    throw new Error(`unexpected embedding dims ${dims} (expected ${LOCAL_SPACE.dims})`);
   }
   // Copy out of the tensor before transferring: ORT may reuse its buffer.
   const vectors = Float32Array.from(output.data as Float32Array);
@@ -136,11 +157,84 @@ async function embed(
   return { vectors, dims, inferMs };
 }
 
+// The endpoint accepts up to 64 texts per request, but Bedrock invokes one
+// text per call and fresh-account quotas run as low as ~1 call/sec — a big
+// request would blow the Lambda's timeout while it paces itself. Small
+// requests keep each round-trip comfortably inside it.
+const CLOUD_MAX_TEXTS = 12;
+// Generous retries: indexing is a background job, so waiting out a
+// throttled minute beats failing the doc.
+const CLOUD_RETRIES = 5;
+
+async function cloudEmbed(
+  texts: string[],
+  settings: Extract<TierSettings, { tier: "cloud" }>,
+): Promise<{ vectors: Float32Array; dims: number; inferMs: number }> {
+  const t0 = Date.now();
+  const out = new Float32Array(texts.length * space.dims);
+  for (let start = 0; start < texts.length; start += CLOUD_MAX_TEXTS) {
+    const slice = texts.slice(start, start + CLOUD_MAX_TEXTS);
+    const vectors = await cloudEmbedOnce(slice, settings);
+    out.set(vectors, start * space.dims);
+  }
+  activeBackend = "cloud";
+  return { vectors: out, dims: space.dims, inferMs: Date.now() - t0 };
+}
+
+async function cloudEmbedOnce(
+  texts: string[],
+  settings: Extract<TierSettings, { tier: "cloud" }>,
+): Promise<Float32Array> {
+  for (let attempt = 0; ; attempt++) {
+    const response = await fetch(settings.endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": settings.apiKey },
+      body: JSON.stringify({ texts }),
+    });
+    // Throttling (429, from the usage plan or Bedrock's own quota) is
+    // expected under indexing load — back off and retry before surfacing.
+    if (response.status === 429 && attempt < CLOUD_RETRIES) {
+      await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
+      continue;
+    }
+    if (!response.ok) {
+      throw new Error(`cloud embed failed: HTTP ${response.status} ${await response.text()}`);
+    }
+    // Model/dims guard: a response from the wrong model or shape throws here,
+    // before any vector can reach the index.
+    return parseCloudResponse(await response.json(), space, texts.length);
+  }
+}
+
 // ---- In-memory hybrid index (lives here so vectors never cross a boundary).
 
-let vectorIndex = new VectorIndex(EXPECTED_DIMS);
+let vectorIndex = new VectorIndex(space.dims);
 let lexicalIndex = new LexicalIndex();
 const metadata = new Map<string, ChunkRecord>();
+
+/** Applies a tier change. Crossing embedding spaces with a populated index
+ *  wipes it — MiniLM and Titan vectors must never share an index — and the
+ *  caller is told so it can trigger a full re-embed. Same-space changes
+ *  (e.g. updating the cloud API key) keep the index untouched. */
+function setTier(settings: TierSettings): { cleared: boolean; indexSize: number } {
+  const nextSpace = spaceFor(settings);
+  const crossed = nextSpace.modelId !== space.modelId;
+  const cleared = crossed && vectorIndex.size > 0;
+  if (crossed) {
+    vectorIndex = new VectorIndex(nextSpace.dims);
+    lexicalIndex = new LexicalIndex();
+    metadata.clear();
+    // Whatever Drive blob we were tracking is in the old space now.
+    loadedRevisionId = null;
+  }
+  tierSettings = settings;
+  space = nextSpace;
+  console.log(
+    `[worker] tier set to ${settings.tier} (${space.modelId}, ${space.dims}d)` +
+      (cleared ? " — index cleared, re-embed required" : ""),
+  );
+  return { cleared, indexSize: vectorIndex.size };
+}
 
 function lexicalDoc(c: ChunkRecord): LexicalDoc {
   return { id: c.id, text: c.text, title: c.docName, breadcrumbs: c.breadcrumbs.join(" › ") };
@@ -201,11 +295,11 @@ async function updateChunks(chunks: ChunkRecord[]): Promise<{
     // Embed only the chunks with no reusable vector (length-sorted batches).
     const embedPositions = plan.reuse.flatMap((v, i) => (v ? [] : [i]));
     const embedTexts = embedPositions.map((i) => newChunks[i]!.text);
-    const fresh = new Float32Array(embedTexts.length * EXPECTED_DIMS);
+    const fresh = new Float32Array(embedTexts.length * space.dims);
     for (const batch of planBatches(embedTexts, DEFAULT_BATCH_OPTIONS)) {
       const { vectors } = await embed(batch.map((i) => embedTexts[i]!));
       batch.forEach((origIdx, j) => {
-        fresh.set(vectors.subarray(j * EXPECTED_DIMS, (j + 1) * EXPECTED_DIMS), origIdx * EXPECTED_DIMS);
+        fresh.set(vectors.subarray(j * space.dims, (j + 1) * space.dims), origIdx * space.dims);
       });
     }
 
@@ -215,7 +309,7 @@ async function updateChunks(chunks: ChunkRecord[]): Promise<{
     for (let i = 0; i < newChunks.length; i++) {
       let vector = plan.reuse[i];
       if (!vector) {
-        vector = fresh.subarray(freshRow * EXPECTED_DIMS, (freshRow + 1) * EXPECTED_DIMS);
+        vector = fresh.subarray(freshRow * space.dims, (freshRow + 1) * space.dims);
         freshRow++;
       }
       vectorIndex.add(newChunks[i]!.id, vector);
@@ -261,9 +355,9 @@ let loadedRevisionId: string | null = null;
 function buildSnapshot(): IndexSnapshot {
   const { ids, vectors } = vectorIndex.snapshot();
   return {
-    modelId: MODEL_ID,
-    revision: MODEL_REVISION,
-    dims: EXPECTED_DIMS,
+    modelId: space.modelId,
+    revision: space.revision,
+    dims: space.dims,
     vectors,
     chunks: ids.map((id) => metadata.get(id)!),
   };
@@ -271,7 +365,7 @@ function buildSnapshot(): IndexSnapshot {
 
 /** Replaces the live index with a snapshot — no re-embedding. */
 function populateFromSnapshot(snapshot: IndexSnapshot): void {
-  vectorIndex = new VectorIndex(EXPECTED_DIMS);
+  vectorIndex = new VectorIndex(space.dims);
   lexicalIndex = new LexicalIndex();
   metadata.clear();
   vectorIndex.addBatch(
@@ -287,7 +381,7 @@ function populateFromSnapshot(snapshot: IndexSnapshot): void {
 async function readRemote(buffer: ArrayBuffer): Promise<IndexSnapshot | null> {
   try {
     const snapshot = await deserializeIndex(buffer);
-    if (snapshot.modelId !== MODEL_ID || snapshot.revision !== MODEL_REVISION) return null;
+    if (snapshot.modelId !== space.modelId || snapshot.revision !== space.revision) return null;
     return snapshot;
   } catch (error) {
     if (error instanceof IndexFormatError) return null;
@@ -418,6 +512,11 @@ self.addEventListener("message", async (event) => {
           },
           [vectors.buffer],
         );
+        break;
+      }
+      case "tier.set": {
+        const { cleared, indexSize } = setTier(request.settings);
+        reply({ id: request.id, ok: true, type: "tier.set", cleared, indexSize });
         break;
       }
       case "index.add": {

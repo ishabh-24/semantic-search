@@ -1,9 +1,21 @@
 import { callWorker } from "./offscreen-client";
 import type { ChunkRecord, DocHit } from "../shared/worker-protocol";
+import type { TierSettings } from "../shared/embedding-tier";
 
 // SW-side API for the worker's in-memory hybrid index. Chunk text goes in;
 // the worker embeds and indexes it (vectors never come back). Queries go in;
 // ranked doc-level hits come back.
+
+/** Pushes a tier change to the worker. cleared:true means the switch crossed
+ *  embedding spaces and wiped the index — the caller must re-index. */
+export async function setWorkerTier(
+  settings: TierSettings,
+): Promise<{ cleared: boolean; indexSize: number }> {
+  const response = await callWorker({ type: "tier.set", settings });
+  if (!response.ok) throw new Error(`tier.set failed: ${response.error}`);
+  if (response.type !== "tier.set") throw new Error(`unexpected response ${response.type}`);
+  return { cleared: response.cleared, indexSize: response.indexSize };
+}
 
 /** Adds a slice of chunks to the index; returns the new total index size. */
 export async function indexChunks(chunks: ChunkRecord[]): Promise<number> {

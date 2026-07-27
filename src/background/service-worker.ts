@@ -2,7 +2,9 @@ import type { IndexProgress, Request, Response } from "../shared/messages";
 import { AuthRequiredError, getAuthStatus, signIn } from "./auth";
 import { exportDocs, listAllDocs } from "./drive";
 import { embedTexts, embedBatched } from "./embedder-client";
-import { searchDocs } from "./retrieval-client";
+import { searchDocs, setWorkerTier } from "./retrieval-client";
+import { getTierSettings, setTierSettings } from "./tier-settings";
+import type { TierSettings } from "../shared/embedding-tier";
 import {
   getIndexProgress,
   loadIndexOnStartup,
@@ -79,6 +81,25 @@ async function handle(request: Request): Promise<Response> {
       return runSync();
     case "search":
       return runSearch(request.query);
+    case "tier.get":
+      return { type: "tier.settings", settings: await getTierSettings(), reindexing: false };
+    case "tier.set":
+      return applyTier(request.settings);
+  }
+}
+
+/** Persists a tier change and pushes it to the worker. A cross-space switch
+ *  wipes the worker index, so kick off a full re-index immediately — the
+ *  popup's progress panel picks it up like any first-run job. */
+async function applyTier(settings: TierSettings): Promise<Response> {
+  await setTierSettings(settings);
+  try {
+    const { cleared } = await setWorkerTier(settings);
+    if (cleared) void startIndex().catch((e) => console.error("[tier] re-index failed", e));
+    return { type: "tier.settings", settings, reindexing: cleared };
+  } catch (error) {
+    console.error("[tier] apply failed", error);
+    return { type: "tier.settings", settings, reindexing: false, error: String(error) };
   }
 }
 

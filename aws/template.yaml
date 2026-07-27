@@ -30,7 +30,9 @@ Globals:
     Runtime: nodejs20.x
     Architectures: [arm64]
     MemorySize: 256
-    Timeout: 15
+    # Just under API Gateway's 29s integration ceiling: throttle-paced Bedrock
+    # calls (tight new-account quotas) need the headroom.
+    Timeout: 28
 
 Resources:
   EmbedApi:

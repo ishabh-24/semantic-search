@@ -26,8 +26,14 @@ export type DocHit = {
   chunkId: string;
 };
 
+import type { TierSettings } from "./embedding-tier";
+
 export type WorkerRequest =
   | { id: number; type: "embed"; texts: string[] }
+  // Configure the embedding tier (local MiniLM vs cloud endpoint). If the new
+  // tier's embedding space differs from the one the current index was built
+  // in, the worker clears the index — mixed-space vectors must never coexist.
+  | { id: number; type: "tier.set"; settings: TierSettings }
   | { id: number; type: "index.add"; chunks: ChunkRecord[] }
   // Re-index a modified/added doc, re-embedding only its changed chunks.
   | { id: number; type: "index.update"; chunks: ChunkRecord[] }
@@ -54,6 +60,15 @@ export type WorkerResponse =
       backend: string;
       modelLoadMs: number;
       inferMs: number;
+    }
+  | {
+      id: number;
+      ok: true;
+      type: "tier.set";
+      /** True when the switch crossed embedding spaces and wiped the index
+       *  (the caller should kick off a full re-index). */
+      cleared: boolean;
+      indexSize: number;
     }
   | { id: number; ok: true; type: "index.add"; indexSize: number }
   | { id: number; ok: true; type: "index.remove"; indexSize: number }

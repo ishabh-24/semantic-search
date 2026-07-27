@@ -9,7 +9,11 @@
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
-  "host_permissions": ["https://oauth2.googleapis.com/", "https://www.googleapis.com/"],
+  "host_permissions": [
+    "https://oauth2.googleapis.com/",
+    "https://www.googleapis.com/",
+    "https://*.execute-api.us-east-1.amazonaws.com/"
+  ],
   "oauth2": {
     "client_id": "1094726331622-omcocdgeb3apg6l2c6iast7607k3imhh.apps.googleusercontent.com",
     "scopes": [
