@@ -15,8 +15,13 @@ embeddings for users who choose it.
 
 ## Stack (commit 25)
 
-- **API Gateway** (REST) — `POST /embed`. Usage plan / API key / throttling
-  are added in commit 27.
+- **API Gateway** (REST) — `POST /embed`, API key required. A usage plan
+  throttles to 10 req/s (burst 20) with a 50k/day quota, plus stage-level
+  throttling as a backstop. Keyless requests get 403 without reaching Lambda.
+- **CloudWatch alarms** — 5XX errors (backend failures) and 4XX spikes
+  (throttling/keyless abuse), both notifying an SNS topic; pass
+  `AlarmEmail=<you>` as a parameter override to subscribe your inbox (the
+  subscription must be confirmed via the email AWS sends).
 - **Lambda** — the `/embed` handler: validates `{ texts: string[] }` (max 64
   texts, 8k chars each), invokes Titan V2 per text (1024 dims, normalized,
   concurrency-capped), returns `{ vectors, dims, model }`. Logs carry only
@@ -48,10 +53,15 @@ sam deploy --guided                        # first time; writes samconfig.toml
 ## Verify
 
 ```bash
+# API key: aws apigateway get-api-keys --include-values (created by the stack)
 curl -sS -X POST "$EMBED_ENDPOINT" \
   -H 'content-type: application/json' \
+  -H "x-api-key: $EMBED_API_KEY" \
   -d '{"texts":["hello world"]}'
 ```
+
+A newly deployed key can take a couple of minutes to propagate; brief 403s
+right after `sam deploy` are expected.
 
 Returns `{ vectors: [[...1024 floats]], dims: 1024, model: "amazon.titan-embed-text-v2:0" }`.
 Vectors are unit-normalized (the index does dot-product cosine on unit

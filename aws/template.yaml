@@ -15,6 +15,15 @@ Parameters:
   StageName:
     Type: String
     Default: prod
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: >
+      Email address subscribed to alarm notifications. Empty skips the
+      subscription (alarms still exist and publish to the SNS topic).
+
+Conditions:
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
 
 Globals:
   Function:
@@ -27,8 +36,81 @@ Resources:
   EmbedApi:
     Type: AWS::Serverless::Api
     Properties:
+      Name: !Sub "${AWS::StackName}-api"
       StageName: !Ref StageName
-      # Usage plan, API key, and throttles are added in commit 27.
+      # Every request needs an API key; the usage plan throttles per key and
+      # caps daily volume. Keyless requests are rejected (403) before Lambda.
+      Auth:
+        ApiKeyRequired: true
+        UsagePlan:
+          CreateUsagePlan: PER_API
+          Throttle:
+            RateLimit: 10
+            BurstLimit: 20
+          Quota:
+            Limit: 50000
+            Period: DAY
+      # Stage-level backstop independent of any key's plan.
+      MethodSettings:
+        - ResourcePath: "/*"
+          HttpMethod: "*"
+          ThrottlingRateLimit: 10
+          ThrottlingBurstLimit: 20
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  # Backend failures: Lambda crashes, Bedrock outages surfacing as 502s.
+  ApiServerErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: /embed is returning 5xx responses
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub "${AWS::StackName}-api"
+        - Name: Stage
+          Value: !Ref StageName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
+
+  # Abuse/throttle signal: usage-plan 429s and keyless 403s are both 4xx here.
+  # Legitimate extension traffic is low-rate, so a 4xx flood means someone is
+  # hammering the endpoint or requests are malformed at scale.
+  ApiThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: /embed 4xx spike (throttling or keyless abuse)
+      Namespace: AWS/ApiGateway
+      MetricName: 4XXError
+      Dimensions:
+        - Name: ApiName
+          Value: !Sub "${AWS::StackName}-api"
+        - Name: Stage
+          Value: !Ref StageName
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 100
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlarmTopic]
+      OKActions: [!Ref AlarmTopic]
 
   EmbedFunction:
     Type: AWS::Serverless::Function
