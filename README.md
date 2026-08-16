@@ -5,7 +5,8 @@ Meaning-based search over your Google Docs, as a Manifest V3 Chrome extension �
 
 Type *"money our clients still owe us"* and it finds `invoice_2024_Q3_final`,
 even though the doc never uses those words. Type the exact filename and it finds
-that too. Click a result to open the doc.
+that too. Click a result to open the doc — from the popup, or straight from the
+address bar (`drv hiring budget`).
 
 ## The thesis
 
@@ -14,7 +15,9 @@ infrastructure. Everything that touches your document text happens **on your
 device**:
 
 - Documents are exported from Drive and **embedded on-device** by a MiniLM
-  sentence-transformer (transformers.js + ONNX Runtime Web).
+  sentence-transformer (transformers.js + ONNX Runtime Web). (An [opt-in
+  cloud tier](#the-opt-in-cloud-tier) exists for higher-quality embeddings —
+  itself stateless, storing nothing.)
 - The index — vectors **and** text — is searched locally.
 - The only place the index is *stored* is **your own Google Drive**, in a
   hidden app-scoped folder (`appDataFolder`). That makes it durable, private,
@@ -38,11 +41,14 @@ flowchart TB
   AppData[("Drive appDataFolder<br/>index.bin (private)")]
   HF[("Hugging Face<br/>MiniLM weights")]
 
+  Cloud[("Opt-in cloud tier<br/>API GW → Lambda → Bedrock<br/>(stateless: text in, vector out)")]
+
   Popup <-->|typed messages| SW
   SW <-->|typed messages| Worker
-  SW -->|files.list · files.export| Drive
+  SW -->|files.list · files.export · changes.list| Drive
   Worker -->|save / load index| AppData
   Worker -.->|one-time model download| HF
+  Worker -.->|only if enabled| Cloud
 ```
 
 **Indexing pipeline.** Authenticate (`chrome.identity`) → list Docs
@@ -66,6 +72,39 @@ It loads on startup and after sign-in — a fresh browser profile restores full
 search with **zero re-embedding**. Concurrent edits from two devices reconcile
 via Drive's `headRevisionId`: on a conflict we merge (union of docs,
 last-write-wins per doc) rather than clobber.
+
+**Incremental sync.** After the first index, the extension polls Drive's
+`changes.list` feed (stored page-token cursor) on startup and on an alarm:
+only modified docs are re-exported, and within a modified doc only chunks
+whose text actually changed are re-embedded (content-hash diffing) — editing
+one paragraph re-embeds ~1 chunk, not the doc. Deleted docs are removed from
+the index.
+
+## The opt-in cloud tier
+
+The default is fully local — that's the thesis. But higher-quality embeddings
+exist server-side, and an API credential can't ship inside an inspectable
+extension bundle. So V2 adds an **opt-in** cloud tier that keeps the thesis
+intact: a minimal AWS pipeline (API Gateway → Lambda → Amazon Bedrock,
+Titan Text Embeddings V2, 1024-dim) that holds the credential server-side and
+**persists nothing** — text in, vectors out, no request bodies even logged.
+The Lambda's IAM role can do exactly two things: invoke that one Bedrock
+model, and write its own CloudWatch logs. Your index still lives only in
+your own Drive.
+
+The embedder worker routes **per request** — every embedding (indexing, sync,
+popup search, omnibox) flows through one router, so query and index vectors
+always come from the same model. MiniLM-384 and Titan-1024 are different
+embedding spaces: the index, its serialized envelope, and the load/merge
+compat checks are all stamped with model + dims, and switching tiers wipes
+and cleanly re-embeds rather than ever mixing spaces.
+
+The endpoint is API-key-gated with usage-plan throttling and CloudWatch
+alarms (5xx and abuse/throttle spikes → SNS). Deploys are infrastructure-as-
+code (AWS SAM) via a GitHub Actions pipeline: PRs are test-gated, and a `v*`
+tag deploys the stack hands-free through GitHub's OIDC federation — no
+long-lived AWS keys anywhere. See [aws/README.md](aws/README.md) to stand up
+your own.
 
 ## Retrieval quality
 
@@ -98,10 +137,12 @@ npm run eval       # retrieval quality numbers
 
 ## Tech
 
-TypeScript · esbuild · Manifest V3 (offscreen document + Web Worker) ·
-transformers.js / ONNX Runtime Web (`Xenova/all-MiniLM-L6-v2`, 384-dim,
-pinned revision) · MiniSearch · Vitest. No UI framework — the popup is
-vanilla TS.
+TypeScript · esbuild · Manifest V3 (offscreen document + Web Worker +
+omnibox) · transformers.js / ONNX Runtime Web (`Xenova/all-MiniLM-L6-v2`,
+384-dim, pinned revision) · MiniSearch · Vitest. No UI framework — the popup
+is vanilla TS. Cloud tier: AWS SAM · API Gateway · Lambda (Node 20, arm64) ·
+Amazon Bedrock (Titan Text Embeddings V2) · CloudWatch/SNS · GitHub Actions
+with OIDC deploys.
 
 ## Limitations & trade-offs
 
@@ -111,6 +152,11 @@ vanilla TS.
   Drive with no re-embedding.
 - **Google Docs only.** Sheets, Slides, PDFs, and other Drive files are not
   indexed yet.
-- **Changes need a re-index.** There's no automatic change detection or
-  deletion handling yet; re-indexing picks up edits (unchanged docs are skipped
-  cheaply). Incremental sync is on the roadmap.
+- **Cloud-tier throughput is quota-bound.** Bedrock invokes one text per call,
+  and fresh AWS accounts get low request-per-minute quotas — the pipeline
+  paces itself (adaptive retries, small batches) rather than failing, but a
+  full cloud re-index of a large Drive takes a while. The local tier has no
+  such ceiling, which is itself a point for the thesis.
+- **Switching embedding tiers re-embeds everything.** By design: MiniLM and
+  Titan vectors are different embedding spaces, and the index never mixes
+  them.
